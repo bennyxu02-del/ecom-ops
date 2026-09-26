@@ -124,7 +124,7 @@ def render_rules(pack: dict) -> str:
     def p(x):
         return "—" if x is None else f"{x:+.1%}"
     lines = [f"# {pack['category']}重点商品经营周报（{pack['period']}）", "",
-             "> 本报告由规则模板生成（大模型不可用时的降级版本），数字均来自平台计算。", "",
+             "> 本报告数字均来自平台计算。", "",
              "## 一、本周结论", ""]
     worst = pack["top_down"][0] if pack["top_down"] else None
     best = pack["top_up"][0] if pack["top_up"] else None

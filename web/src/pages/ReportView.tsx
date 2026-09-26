@@ -35,7 +35,7 @@ export default function ReportView() {
       <div className="no-print" style={{ marginBottom: 10 }}><Link to="/reports" className="small">← 报告中心</Link></div>
       <div className="page-head no-print">
         <div><h1>{r.title}</h1>
-          <div className="sub">{r.source === "llm" ? "AI 生成初稿" : "规则模板生成"} · <Tag bordered={false} color={published ? "success" : "default"}>{published ? "已发布" : "草稿，确认后发布"}</Tag></div></div>
+          <div className="sub">{r.source === "llm" ? "AI 生成初稿" : "系统生成"} · <Tag bordered={false} color={published ? "success" : "default"}>{published ? "已发布" : "草稿，确认后发布"}</Tag></div></div>
         <div className="right">
           {!published ? <>
             <Button icon={editing ? <EyeOutlined /> : <EditOutlined />} onClick={() => { setDraft(r.content); setEditing(!editing); }}>{editing ? "预览" : "编辑"}</Button>

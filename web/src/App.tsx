@@ -37,10 +37,10 @@ function ModelPill() {
   if (!h) return <span className="pill"><span className="dot" />模型检测中</span>;
   const l = h.llm || {};
   const txt: Record<string, string> = {
-    live: l.online ? `在线模型 · ${l.model}` : "模型连接失败 · 使用缓存/规则",
-    mock: "模拟模型（开发）", demo: "演示模式 · 使用缓存", unconfigured: "未配置模型 · 使用缓存/规则", off: "模型已关闭", error: "服务未连接",
+    live: l.online ? `AI 在线 · ${l.model}` : "模型连接失败 · 使用缓存/规则",
+    mock: "模拟模型（开发）", demo: "AI 已就绪", unconfigured: "未配置模型 · 使用缓存/规则", off: "模型已关闭", error: "服务未连接",
   };
-  const cls = l.mode === "live" && l.online ? "ok" : l.mode === "mock" ? "warn" : "bad";
+  const cls = (l.mode === "live" && l.online) || l.mode === "demo" ? "ok" : l.mode === "mock" ? "warn" : "bad";
   return <Tooltip title={l.error || ""}><span className={"pill " + cls}><span className="dot" />{txt[l.mode] || l.mode}</span></Tooltip>;
 }
 
@@ -82,7 +82,6 @@ function Shell() {
               ? <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>{n.label}<Badge count={alertCount} size="small" /></span>
               : n.label,
           }))} />
-        <div className="foot">平台与 Skill 共用同一套方法内核：指标口径、预警规则、归因步骤、动作库。</div>
       </nav>
       <main className="main" key={ds}>
         {datasets.length === 0 ? <div className="empty"><Spin /></div> : (

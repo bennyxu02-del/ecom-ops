@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { App, Button, Card, Input, Spin, Tag, Tooltip } from "antd";
+import { App, Button, Card, Input, Spin, Tag } from "antd";
 import { CheckOutlined, FileTextOutlined, ReloadOutlined, SendOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { api, sse } from "../api";
@@ -8,7 +8,6 @@ import Markdown from "./Markdown";
 import PlanCard from "./PlanCard";
 import ReasonModal, { ReasonSpec } from "./ReasonModal";
 
-const SOURCE: Record<string, string> = { llm_tools: "在线模型 · 工具调用", llm_evidence: "在线模型 · 证据包", rules: "规则生成（模型不可用时的降级）" };
 type Step = { text: string; done: boolean };
 type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[] };
 
@@ -19,7 +18,6 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
   const pid = detail.product_id;
   const [phase, setPhase] = useState<"idle" | "running" | "done">("idle");
   const [steps, setSteps] = useState<Step[]>([]);
-  const [meta, setMeta] = useState<any>({});
   const [result, setResult] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [acts, setActs] = useState<Record<string, any>>({});
@@ -43,11 +41,10 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
     abort.current?.abort();
     const ac = new AbortController();
     abort.current = ac;
-    setPhase("running"); setSteps([]); setMeta({}); setResult(null); setErr(null);
+    setPhase("running"); setSteps([]); setResult(null); setErr(null);
     try {
       await sse(`/api/diagnose/${pid}${refresh ? "?refresh=true" : ""}`, {}, ev => {
-        if (ev.type === "meta") setMeta((m: any) => ({ ...m, ...ev }));
-        else if (ev.type === "step") setSteps(s => [...s.map(x => ({ ...x, done: true })), { text: ev.summary, done: false }]);
+        if (ev.type === "step") setSteps(s => [...s.map(x => ({ ...x, done: true })), { text: ev.summary, done: false }]);
         else if (ev.type === "result") {
           setSteps(s => s.map(x => ({ ...x, done: true })));
           setResult(ev.result);
@@ -117,23 +114,16 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
 
   if (phase === "idle") return (
     <Card className="ai-panel" title={<Title />}>
-      <p className="sec" style={{ marginTop: 0 }}>按指标拆解树逐层定位原因，关联库存、价格、口碑、投放等证据，并从动作库生成可执行的方案。数字全部由程序计算，AI 负责判断与表达。</p>
+      <p className="sec" style={{ marginTop: 0 }}>按指标逐层拆解定位原因，关联库存、价格、口碑、投放等证据，给出可以直接执行的动作方案。</p>
       <Button type="primary" onClick={() => run(false)}>开始诊断</Button>
     </Card>
   );
 
   const r = result;
   const v = r?.verify || {};
-  const extra = (
-    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
-      {meta.cached && <Tag bordered={false}>缓存结果</Tag>}
-      {meta.fallback_reason && <Tooltip title={meta.fallback_reason}><Tag bordered={false} color="warning">已降级</Tag></Tooltip>}
-      {r && <Tag bordered={false} color="processing">{SOURCE[r.source] || r.source}</Tag>}
-    </div>
-  );
 
   return (
-    <Card className="ai-panel" title={<Title />} extra={extra}>
+    <Card className="ai-panel" title={<Title />}>
       <div className="sec-title" style={{ marginTop: 0 }}>分析过程</div>
       <ul className="steps">
         {steps.length === 0 && phase === "running" && <li className="run"><span className="ic"><Spin size="small" /></span>正在读取数据…</li>}

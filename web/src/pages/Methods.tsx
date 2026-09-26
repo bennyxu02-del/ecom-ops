@@ -80,11 +80,10 @@ export default function Methods() {
   return (
     <>
       <div className="page-head">
-        <div><h1>方法库</h1><div className="sub">平台运行时读取这些文件；Skill 打包的也是同一份文件——改一处，两边同时生效</div></div>
+        <div><h1>方法库</h1><div className="sub">平台使用的指标口径、预警规则、分析步骤和动作方案</div></div>
         <div className="right"><Button type="primary" icon={<DownloadOutlined />} href={"/api/skill/download?ds=" + getDs()}>下载 Skill 包</Button></div>
       </div>
-      <div className="banner"><b>方法与载体分离</b><span>指标口径、预警规则、归因步骤、动作库、品类配置是「方法内核」；平台和通用 Agent 都只是它的宿主。</span></div>
-      <Card className="mt"><Tabs items={items} /></Card>
+      <Card><Tabs items={items} /></Card>
     </>
   );
 }

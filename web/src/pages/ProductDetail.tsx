@@ -91,7 +91,7 @@ export default function ProductDetail() {
             extra={<Segmented size="small" value={metric} onChange={v => setMetric(String(v))} options={avail.map(m => ({ label: m[1], value: m[0] }))} />}>
             {chart && <TrendChart dates={chart.dates} series={chart.series} kind={chart.kind} zeroBase={chart.zeroBase} events={chart.events} height={260} />}
           </Card>
-          <Card styles={{ body: { padding: "12px 12px 16px" } }} title={<>指标拆解树<span className="hint">GMV = 访客数 × 支付转化率 × 客单价 · {dec.cur_window} 对比 {dec.prev_window} · 贡献额（{dec.method}）</span></>}>
+          <Card styles={{ body: { padding: "12px 12px 16px" } }} title={<>指标拆解树<span className="hint">GMV = 访客数 × 支付转化率 × 客单价 · {dec.cur_window} 对比 {dec.prev_window}</span></>}>
             <DecomposeTree d={d} />
           </Card>
           <div className="grid g2">

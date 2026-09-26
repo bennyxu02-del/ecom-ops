@@ -47,7 +47,7 @@ def run(name: str):
         _, stream = diagnose.backend(name)
         try:
             if mode == "mock":
-                body = weekly.render_rules(pack).replace("> 本报告由规则模板生成（大模型不可用时的降级版本），数字均来自平台计算。\n", "")
+                body = weekly.render_rules(pack).replace("> 本报告数字均来自平台计算。\n", "")
                 for i in range(0, len(body), 40):
                     time.sleep(0.01)
                     text += body[i:i + 40]
