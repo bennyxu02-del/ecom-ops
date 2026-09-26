@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Badge, Menu, Select, Spin, Tooltip } from "antd";
-import { AlertOutlined, AppstoreOutlined, CheckSquareOutlined, DashboardOutlined, FileTextOutlined, ReadOutlined } from "@ant-design/icons";
+import { AlertOutlined, AppstoreOutlined, CheckSquareOutlined, DashboardOutlined, FileTextOutlined, ReadOutlined, TeamOutlined } from "@ant-design/icons";
 import { api, getDs, setDs } from "./api";
 import Overview from "./pages/Overview";
 import Products from "./pages/Products";
@@ -11,6 +11,8 @@ import Actions from "./pages/Actions";
 import Reports from "./pages/Reports";
 import ReportView from "./pages/ReportView";
 import Methods from "./pages/Methods";
+import Collab from "./pages/Collab";
+import HandoffView from "./pages/HandoffView";
 
 type Dataset = { id: string; name: string; as_of: string; products: number };
 type Ctx = { ds: string; refreshMeta: () => void };
@@ -22,6 +24,7 @@ const NAV = [
   { key: "products", label: "商品", icon: <AppstoreOutlined /> },
   { key: "alerts", label: "预警中心", icon: <AlertOutlined /> },
   { key: "actions", label: "行动跟踪", icon: <CheckSquareOutlined /> },
+  { key: "collab", label: "协同中心", icon: <TeamOutlined /> },
   { key: "reports", label: "报告中心", icon: <FileTextOutlined /> },
   { key: "methods", label: "方法库", icon: <ReadOutlined /> },
 ];
@@ -48,11 +51,13 @@ function Shell() {
   const [ds, setDsState] = useState(getDs());
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [alertCount, setAlertCount] = useState(0);
+  const [collabCount, setCollabCount] = useState(0);
   const nav = useNavigate();
   const loc = useLocation();
 
   const refreshMeta = useCallback(() => {
     api<any[]>("/api/alerts?today=true&status=pending,processing").then(a => setAlertCount(a.length)).catch(() => {});
+    api<any[]>("/api/handoffs").then(hs => setCollabCount(hs.filter(h => ["draft", "question"].includes(h.status)).length)).catch(() => {});
   }, []);
 
   useEffect(() => { api<Dataset[]>("/api/datasets").then(setDatasets); }, []);
@@ -78,8 +83,9 @@ function Shell() {
         <Menu mode="inline" selectedKeys={[active]} onClick={e => nav("/" + e.key)}
           items={NAV.map(n => ({
             key: n.key, icon: n.icon,
-            label: n.key === "alerts" && alertCount
-              ? <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>{n.label}<Badge count={alertCount} size="small" /></span>
+            label: (n.key === "alerts" && alertCount) || (n.key === "collab" && collabCount)
+              ? <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>{n.label}
+                  <Badge count={n.key === "alerts" ? alertCount : collabCount} size="small" color={n.key === "collab" ? "#fab219" : undefined} /></span>
               : n.label,
           }))} />
       </nav>
@@ -95,6 +101,7 @@ function Shell() {
             <Route path="/reports" element={<Reports />} />
             <Route path="/report/:rid" element={<ReportView />} />
             <Route path="/methods" element={<Methods />} />
+            <Route path="/collab" element={<Collab />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Routes>
         )}
@@ -103,6 +110,13 @@ function Shell() {
   );
 }
 
+function Root() {
+  const loc = useLocation();
+  // 协同方处理页（从飞书卡片或转交单链接打开）不带导航框架
+  if (loc.pathname.startsWith("/h/")) return <Routes><Route path="/h/:hid" element={<HandoffView />} /></Routes>;
+  return <Shell />;
+}
+
 export default function App() {
-  return <HashRouter><Shell /></HashRouter>;
+  return <HashRouter><Root /></HashRouter>;
 }

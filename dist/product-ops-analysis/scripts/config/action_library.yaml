@@ -9,6 +9,8 @@
 #   constraints 约束检查（不通过则不展示；超出权限标记「需审批」）
 #   exec_type   执行类型：自己执行 / 需审批 / 转交
 #   steps       执行步骤模板，{} 中的值由计算结果填入
+#   step_by     每一步由谁来做（与 steps 一一对应）：我 = 发起的商品运营本人，其余为协同角色；
+#               不写时按 exec_type 推断（自己执行 → 我；转交 → owner_role）
 #   estimate    测算类型：price（毛利与保本线）/ recovery（可挽回 GMV）/ none
 #   materials   AI 可起草的执行物料
 # 不预测刺激类动作能多卖多少：缺少历史实验数据，只给保本线。
@@ -24,7 +26,8 @@ actions:
     exec_type: 转交
     owner_role: 供应链
     steps:
-      - 向供应链提交 {variant} 补货 {qty} 件，要求 {lead} 天内到货
+      - 为 {variant} 补货 {qty} 件，{lead} 天内到货
+    step_by: [供应链]
     track: {metric: variant_units, days: 5}
     estimate: recovery
     risks: [补货期间仍可能继续断货，需同时执行引导替代规格]
@@ -58,8 +61,9 @@ actions:
     exec_type: 转交
     owner_role: 投放运营
     steps:
-      - 通知投放运营暂停 {variant} 相关的推广计划，或把落地页默认规格改为 {alt_variant}
+      - 暂停 {variant} 相关的推广计划，或把落地页默认规格改为 {alt_variant}
       - 到货后恢复投放
+    step_by: [投放运营, 投放运营]
     track: {metric: uv_paid, days: 5}
     estimate: none
     risks: [暂停后付费访客下降，需在到货后及时恢复]
@@ -145,8 +149,9 @@ actions:
     exec_type: 转交
     owner_role: 投放运营
     steps:
-      - 与投放运营确认 {event_date} 的预算调整是否为计划内
+      - 确认 {event_date} 的预算调整是否为计划内
       - 如非计划内，恢复预算；如为计划内，评估是否用其他渠道补足每天约 {uv_gap} 个访客的缺口
+    step_by: [投放运营, 投放运营]
     track: {metric: uv_paid, days: 5}
     estimate: recovery
     risks: [恢复预算会增加推广费用，需结合投入产出判断]
@@ -214,8 +219,9 @@ actions:
     owner_role: 商品运营 / 供应链
     steps:
       - 筛选 {issue_date} 前后的差评，逐条回复并提供补偿方案（AI 可起草回复模板）
-      - 把差评涉及的批次信息转交供应链排查质量
+      - 排查差评涉及批次的质量问题，反馈原因与处理措施
       - 更新客服话术，统一解释口径
+    step_by: [我, 供应链, 我]
     track: {metric: rating, days: 7}
     estimate: none
     risks: [批次问题未解决前，差评可能持续]
@@ -231,8 +237,9 @@ actions:
     exec_type: 转交
     owner_role: 供应链
     steps:
-      - 向供应链提交 {variant} 加急补货 {qty} 件，要求 {lead} 天内到货
+      - 为 {variant} 加急补货 {qty} 件，{lead} 天内到货
       - 库存不足以支撑放量前，暂不追加投放
+    step_by: [供应链, 我]
     track: {metric: days_of_supply, days: 5}
     estimate: none
     risks: [热度回落后可能积压，补货量可分批]

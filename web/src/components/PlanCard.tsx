@@ -1,4 +1,8 @@
-import { Button, Tag, Tooltip } from "antd";
+import { useState } from "react";
+import { App, Button, Checkbox, Tag, Tooltip } from "antd";
+import { SendOutlined } from "@ant-design/icons";
+import { api } from "../api";
+import HandoffSendModal, { HandoffTag } from "./HandoffSendModal";
 import { money, signed } from "../format";
 
 export const MATERIAL: Record<string, string> = {
@@ -24,16 +28,35 @@ function Estimate({ e }: { e: any }) {
   return <><div className="est"><div><small>{val[0]}</small><b>{money(val[1])}</b></div></div>{e.note && <div className="muted small">{e.note}</div>}</>;
 }
 
-/** 单个动作方案卡：对象、参数、测算、约束检查、步骤、跟踪、处理按钮 */
-export default function PlanCard({ p, i, act, onDecide, onExec, onMaterial }: {
+/** 单个动作方案卡：对象、参数、测算、约束检查、分工到人的步骤、协同进度、效果跟踪 */
+export default function PlanCard({ p, i, act, onDecide, onChanged, onMaterial }: {
   p: any; i: number; act?: any;
-  onDecide: (plan: any, decision: "adopt" | "reject" | "transfer") => void;
-  onExec: (actionId: number) => void;
+  onDecide: (plan: any, decision: "adopt" | "reject") => void;
+  onChanged: () => void;
   onMaterial: (preset: string, plan: any, label: string) => void;
 }) {
-  const transfer = String(p.exec_type).includes("转交");
+  const [sending, setSending] = useState<any>(null);
+  const { message } = App.useApp();
   const mats = [...new Set<string>((p.materials || []).filter((m: string) => MATERIAL[m]))];
-  const canExec = act && (act.status === "adopted" || (act.status === "transferred" && !act.exec_date));
+  const plan = act?.plan?.steps ? act.plan : p;
+  const owners: string[] = plan.step_owners || p.step_owners || [];
+  const live = act && act.status !== "rejected";
+  const done = new Set<number>(act?.step_done || []);
+  const hs: any[] = act?.handoffs || [];
+  const waitApproval = act?.progress?.approval_pending;
+  const stepHandoff = (k: number) => hs.find(h => h.kind === "transfer" && (h.steps || []).includes(k));
+  const approvalNeeded = (p.handoffs || []).some((h: any) => h.kind === "approval");
+
+  const toggle = async (k: number, v: boolean) => {
+    await api(`/api/actions/${act.id}/steps`, { method: "PATCH", body: { index: k, done: v } });
+    onChanged();
+  };
+  const manualDone = async () => {
+    await api(`/api/actions/${act.id}`, { method: "PATCH", body: { status: "executed" } });
+    message.success("已标记执行，平台将从今天起跟踪效果");
+    onChanged();
+  };
+
   return (
     <div className="plan">
       <div className="ph">
@@ -54,7 +77,29 @@ export default function PlanCard({ p, i, act, onDecide, onExec, onMaterial }: {
             ))}
           </div>
         )}
-        <div><div className="small muted" style={{ marginBottom: 4 }}>执行步骤</div><ol>{p.steps.map((s: string, k: number) => <li key={k}>{s}</li>)}</ol></div>
+        <div>
+          <div className="small muted" style={{ marginBottom: 4 }}>执行步骤</div>
+          <div className="steps-owned">
+            {plan.steps.map((s: string, k: number) => {
+              const who = owners[k] || "我";
+              const mine = who === "我";
+              const h = !mine ? stepHandoff(k) : null;
+              return (
+                <div key={k} className={"so" + (live && mine && done.has(k) ? " done" : "")}>
+                  <span className="idx">{k + 1}</span>
+                  <Tag bordered={false} color={mine ? "blue" : "orange"} className="who">{who}</Tag>
+                  <span className="txt">{s}</span>
+                  {live && mine && act.status !== "executed" && (
+                    <Tooltip title={waitApproval ? "等待审批通过后再执行" : ""}>
+                      <Checkbox checked={done.has(k)} disabled={waitApproval} onChange={e => toggle(k, e.target.checked)}>完成</Checkbox>
+                    </Tooltip>
+                  )}
+                  {live && h && <HandoffTag h={h} />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
         <div className="small sec">跟踪：执行后 {p.track.days} 天看{p.track.metric_name}　·　风险：{p.risks.join("；")}</div>
         {p.rationale && <div className="why">{p.rationale}</div>}
         {mats.length > 0 && (
@@ -63,25 +108,50 @@ export default function PlanCard({ p, i, act, onDecide, onExec, onMaterial }: {
             {mats.map(m => <Button key={m} size="small" onClick={() => onMaterial(MATERIAL[m], p, m)}>{m}</Button>)}
           </div>
         )}
+        {live && hs.length > 0 && (
+          <div className="collab">
+            <div className="small muted" style={{ marginBottom: 6 }}>协同</div>
+            {hs.map(h => (
+              <div key={h.id} className="crow">
+                <Tag bordered={false}>{h.kind_name}</Tag>
+                <span className="role">{h.role}</span>
+                <span className="small muted">{h.kind === "approval" ? "批准后才能执行" : `负责第 ${h.steps.map((x: number) => x + 1).join("、")} 步`}</span>
+                <HandoffTag h={h} />
+                {h.note && <span className="small sec">「{h.note}」</span>}
+                <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                  {h.status === "draft"
+                    ? <Button size="small" type="primary" icon={<SendOutlined />} onClick={() => setSending(h)}>{h.kind === "approval" ? "提交审批" : "发送转交单"}</Button>
+                    : <Button size="small" type="link" href={`#/h/${h.id}`} target="_blank">查看</Button>}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="pf">
         {act ? (
           <>
-            <Tag bordered={false} color={act.status === "rejected" ? "default" : "success"}>{act.status_name}</Tag>
+            <Tag bordered={false} color={act.status === "executed" ? "success" : act.status === "rejected" || act.status === "declined" ? "default" : "processing"}>{act.status_name}</Tag>
             {act.reject_reason && <span className="small muted">{act.reject_reason}</span>}
-            {canExec && <Button size="small" onClick={() => onExec(act.id)} style={{ borderColor: "#0ca30c", color: "#0ca30c" }}>标记已执行</Button>}
-            {act.effect?.status && (
+            {act.status === "adopted" && act.progress && (
+              <span className="small muted">我的步骤 {act.progress.mine_done.length}/{act.progress.mine.length}{hs.length ? ` · 协同 ${hs.filter(h => ["done", "approved"].includes(h.status)).length}/${hs.length}` : ""}，全部完成后自动开始跟踪效果</span>
+            )}
+            {act.status === "adopted" && <Button size="small" type="text" onClick={manualDone}>直接标记已执行</Button>}
+            {act.effect?.status && act.status === "executed" && (
               <span className="st muted">效果跟踪：{act.effect.status === "已完成" ? `${act.effect.metric_name} ${signed(act.effect.change_pct)}` : act.effect.status}</span>
             )}
           </>
         ) : (
           <>
-            <Button size="small" type="primary" onClick={() => onDecide(p, transfer ? "transfer" : "adopt")}>{transfer ? `采纳并转交${p.owner_role}` : "采纳"}</Button>
+            <Button size="small" type="primary" onClick={() => onDecide(p, "adopt")}>{approvalNeeded ? "采纳并提交审批" : "采纳"}</Button>
             <Button size="small" onClick={() => onDecide(p, "reject")}>驳回</Button>
-            {!transfer && <Button size="small" type="text" onClick={() => onDecide(p, "transfer")}>转交他人</Button>}
+            {(p.handoffs || []).filter((h: any) => h.kind === "transfer").length > 0 && (
+              <span className="small muted">采纳后，{(p.handoffs || []).filter((h: any) => h.kind === "transfer").map((h: any) => h.role).join("、")}的部分会生成转交单</span>
+            )}
           </>
         )}
       </div>
+      <HandoffSendModal handoff={sending} onClose={() => setSending(null)} onSent={() => { setSending(null); onChanged(); }} />
     </div>
   );
 }

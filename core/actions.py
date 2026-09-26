@@ -146,17 +146,19 @@ def act_replenish(ds, pid, cause, window):
     if qty <= 0 and transit:
         eta = transit[0]["date"]
         steps = [f"在途补货 {tq:,} 件，预计 {eta} 到货；按公式（日均 {daily:.0f} 件 ×（补货周期 {lead} 天 + 安全库存 {safety} 天））无需追加",
-                 f"与供应链确认 {t['name']} 能否按 {eta} 准时到货，能否提前",
+                 f"确认 {t['name']} 能否按 {eta} 准时到货，能否提前",
                  "到货当天恢复该规格的正常售卖与投放"]
+        step_by = ["我", "供应链", "我"]
         name_override = "确认在途补货到货时间"
     elif qty <= 0:
         raise Skip("按公式计算无需补货")
     else:
         steps = None
+        step_by = None
         name_override = None
         if transit:
             fill["qty"] = qty
-    return dict(params=params, estimate=est, fill=fill, steps=steps, name_override=name_override,
+    return dict(params=params, estimate=est, fill=fill, steps=steps, step_by=step_by, name_override=name_override,
                 target=f"{ds.product(pid)['product_name']} · {t['name']}",
                 params_text=[f"基线日均销量 {daily:.0f} 件", f"当前库存 {t['stock_now']:,} 件", f"在途 {tq:,} 件",
                              (f"建议补货 {qty:,} 件" if qty > 0 else f"需求 {need:,.0f} 件，在途已覆盖，无需追加")])
@@ -470,11 +472,69 @@ def plan_actions(ds: Dataset, pid: str, cause: str, window: int = 7) -> dict:
             params=res.get("params", {}), params_text=res.get("params_text", []),
             estimate=res.get("estimate", {"type": "none"}), checks=res.get("checks", []),
             exec_type=exec_type, approval_reasons=approval, owner_role=a["owner_role"], steps=steps,
+            step_owners=_step_owners(a, steps, res.get("step_by")),
             track=track, risks=a.get("risks") or [], materials=a.get("materials") or [],
         ))
+        _relabel(candidates[-1])
+        candidates[-1]["handoffs"] = handoffs_of(candidates[-1])
     return dict(product_id=pid, cause=cause, cause_name=config.cause_name(cause),
                 candidates=candidates, excluded=excluded,
                 note=None if candidates else "动作库中没有可执行的方案，需要人工判断")
+
+
+SELF = "我"
+APPROVER = "商品主管"
+
+
+def _step_owners(a: dict, steps: list, override=None) -> list[str]:
+    """每一步由谁来做：计算结果指定 > 动作库 step_by > 按执行类型推断。"""
+    if override and len(override) == len(steps):
+        return list(override)
+    lib_by = a.get("step_by")
+    if lib_by and len(lib_by) == len(steps):
+        return list(lib_by)
+    et = str(a.get("exec_type", ""))
+    owner = SELF if ("自己执行" in et or "转交" not in et) else a.get("owner_role", SELF)
+    return [owner] * len(steps)
+
+
+def _relabel(plan: dict):
+    """执行类型与负责角色按实际步骤负责人重新标注（需审批优先）。"""
+    owners = plan.get("step_owners") or []
+    others = list(dict.fromkeys(o for o in owners if o != SELF))
+    mine = SELF in owners
+    if plan.get("exec_type") != "需审批":
+        plan["exec_type"] = "自己执行 + 转交" if (mine and others) else ("转交" if others else "自己执行")
+    plan["owner_role"] = " / ".join((["商品运营"] if mine else []) + others) or plan.get("owner_role")
+
+
+def handoffs_of(plan: dict) -> list[dict]:
+    """需要别人参与的部分：审批（先于执行）+ 按角色归并的转交步骤。"""
+    out = []
+    if plan.get("approval_reasons"):
+        out.append(dict(kind="approval", role=APPROVER, steps=[], reasons=list(plan["approval_reasons"])))
+    roles: dict[str, list[int]] = {}
+    for i, who in enumerate(plan.get("step_owners") or []):
+        if who != SELF:
+            roles.setdefault(who, []).append(i)
+    for role, idx in roles.items():
+        out.append(dict(kind="transfer", role=role, steps=idx, reasons=[]))
+    return out
+
+
+def annotate(plan: dict) -> dict:
+    """为旧版本生成的方案（如缓存结果）补上步骤负责人与协同事项，幂等。"""
+    if not plan.get("step_owners") or len(plan["step_owners"]) != len(plan.get("steps") or []):
+        a = next((x for x in config.action_library()["actions"] if x["id"] == plan.get("action_id")), None)
+        steps = plan.get("steps") or []
+        override = None
+        if plan.get("action_id") == "replenish" and len(steps) == 3 and "在途" in steps[0]:
+            override = [SELF, "供应链", SELF]
+        plan["step_owners"] = _step_owners(a or {"exec_type": plan.get("exec_type", ""), "owner_role": plan.get("owner_role")},
+                                           steps, override)
+    _relabel(plan)
+    plan["handoffs"] = handoffs_of(plan)
+    return plan
 
 
 def completeness(plan: dict) -> list[str]:

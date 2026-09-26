@@ -26,9 +26,10 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from core import actions as core_actions  # noqa: E402
 from core import sop, weekly  # noqa: E402
 
-from . import data, llm_client, state  # noqa: E402
+from . import collab, data, llm_client, state  # noqa: E402
 from .agent import chat as chat_agent  # noqa: E402
 from .agent import diagnose, report  # noqa: E402
 from .product_report import render_product_report  # noqa: E402
@@ -110,6 +111,27 @@ class ActionCreate(BaseModel):
     decision: Literal["adopt", "transfer", "reject"]
     reason: Optional[str] = None
     role: Optional[str] = None
+    context: Optional[dict] = Field(None, description="诊断结论与证据，用于生成转交单：{summary, evidence: [..]}")
+
+
+class StepUpdate(BaseModel):
+    index: int
+    done: bool
+
+
+class HandoffPut(BaseModel):
+    message: Optional[str] = None
+    role: Optional[str] = None
+
+
+class HandoffSend(BaseModel):
+    channel: Literal["copy", "feishu"] = "copy"
+    message: Optional[str] = None
+
+
+class HandoffRespond(BaseModel):
+    status: Literal["received", "done", "question", "approved", "declined"]
+    note: Optional[str] = None
 
 
 class ActionUpdate(BaseModel):
@@ -181,14 +203,14 @@ def api_products(ds: str = DS, focus: bool = False):
 
 def _decorate_action(name, a):
     ds = data.ds_of(name)
-    names = {"adopted": "已采纳 · 待执行", "executed": "已执行", "transferred": "已转交", "rejected": "已驳回"}
-    a["status_name"] = names.get(a["status"], a["status"])
+    collab.decorate_action(a)
     try:
         a["plan"] = json.loads(a.get("plan_json") or "{}")
     except json.JSONDecodeError:
         a["plan"] = {}
     a.pop("plan_json", None)
-    if a["status"] in ("executed", "transferred", "adopted"):
+    a.pop("context_json", None)
+    if a["status"] in ("executed", "transferred", "adopted", "declined"):
         a["effect"] = weekly.effect(ds, a["product_id"], a.get("track_metric") or "gmv", a.get("exec_date"),
                                     variant=a.get("variant"))
     return a
@@ -260,27 +282,93 @@ def api_actions(ds: str = DS, product_id: Optional[str] = None):
     return [_decorate_action(name, a) for a in state.list_actions(name, product_id)]
 
 
+def _base_url(request: Request) -> str:
+    return os.environ.get("PUBLIC_BASE_URL") or str(request.base_url)
+
+
 @app.post("/api/actions", tags=["行动跟踪"])
-def api_action_create(body: ActionCreate, ds: str = DS):
+def api_action_create(body: ActionCreate, request: Request, ds: str = DS):
     name = ds_name(ds)
     d = data.ds_of(name)
-    plan = body.plan
+    plan = core_actions.annotate(dict(body.plan))
     if body.decision == "reject" and not body.reason:
         raise HTTPException(400, "驳回时需要选择原因")
-    status = {"adopt": "adopted", "transfer": "transferred", "reject": "rejected"}[body.decision]
+    status = "rejected" if body.decision == "reject" else "adopted"
     today = d.as_of.strftime("%Y-%m-%d")
     aid = state.add_action(ds=name, card_id=body.card_id, product_id=body.product_id,
                            product_name=d.product(body.product_id)["product_name"], action_id=plan.get("action_id"),
                            name=plan.get("name"), cause=plan.get("cause"), cause_name=plan.get("cause_name"),
                            target=plan.get("target"), plan_json=dumps(plan), exec_type=plan.get("exec_type"),
                            owner_role=plan.get("owner_role"), status=status, reject_reason=body.reason,
-                           transfer_role=body.role or (plan.get("owner_role") if body.decision == "transfer" else None),
+                           transfer_role=None, context_json=dumps(body.context or {}),
                            track_metric=(plan.get("track") or {}).get("metric"),
                            variant=(plan.get("params") or {}).get("variant"),
                            adopted_date=today if body.decision != "reject" else None)
+    if body.decision != "reject":
+        collab.create_for_action(name, aid, plan, body.context or {}, _base_url(request))
     if body.card_id and body.decision != "reject":
         state.set_card(name, body.card_id, "done")
     return dict(ok=True, id=aid)
+
+
+@app.patch("/api/actions/{aid}/steps", tags=["行动跟踪"], summary="勾选 / 取消勾选我的步骤")
+def api_action_step(aid: int, body: StepUpdate):
+    if not state.get_action(aid):
+        raise HTTPException(404, "动作不存在")
+    collab.set_step(aid, body.index, body.done)
+    return dict(ok=True)
+
+
+# ---------------- 集成 ----------------
+@app.get("/api/integrations/feishu", tags=["集成"])
+def api_feishu_status():
+    return dict(enabled=False, ready=False, roles={})
+
+
+# ---------------- 协同 ----------------
+@app.get("/api/handoffs", tags=["协同"])
+def api_handoffs(ds: str = DS):
+    return [collab.decorate_handoff(h, with_context=True) for h in state.list_handoffs(ds_name(ds))]
+
+
+def _handoff_or_404(hid: int) -> dict:
+    h = state.get_handoff(hid)
+    if not h:
+        raise HTTPException(404, "协同事项不存在")
+    return h
+
+
+@app.get("/api/handoffs/{hid}", tags=["协同"])
+def api_handoff(hid: int):
+    return collab.decorate_handoff(_handoff_or_404(hid), with_context=True)
+
+
+@app.put("/api/handoffs/{hid}", tags=["协同"], summary="发送前修改转交单内容")
+def api_handoff_put(hid: int, body: HandoffPut):
+    _handoff_or_404(hid)
+    kw = {k: v for k, v in body.model_dump().items() if v is not None}
+    if kw:
+        state.update_handoff(hid, **kw)
+    return collab.decorate_handoff(state.get_handoff(hid), with_context=True)
+
+
+@app.post("/api/handoffs/{hid}/send", tags=["协同"])
+def api_handoff_send(hid: int, body: HandoffSend):
+    _handoff_or_404(hid)
+    if body.channel == "feishu":
+        raise HTTPException(400, "飞书集成尚未配置")
+    collab.mark_sent(hid, body.channel, body.message)
+    return collab.decorate_handoff(state.get_handoff(hid), with_context=True)
+
+
+@app.post("/api/handoffs/{hid}/respond", tags=["协同"], summary="协同方处理：已接收 / 已完成 / 有疑问 / 批准 / 驳回")
+def api_handoff_respond(hid: int, body: HandoffRespond):
+    _handoff_or_404(hid)
+    try:
+        h = collab.respond(hid, body.status, body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return collab.decorate_handoff(h, with_context=True)
 
 
 @app.patch("/api/actions/{aid}", tags=["行动跟踪"])

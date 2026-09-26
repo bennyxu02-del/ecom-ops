@@ -62,26 +62,20 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
 
   const ask = (spec: ReasonSpec) => new Promise<{ option: string; text: string } | null>(resolve => setModal({ spec, resolve }));
 
-  const decide = async (plan: any, decision: "adopt" | "reject" | "transfer") => {
+  const decide = async (plan: any, decision: "adopt" | "reject") => {
     const body: any = { plan, product_id: pid, card_id: card ? card.id : null, decision };
     if (decision === "reject") {
       const m = await ask({ title: "驳回方案", options: ["方案不适用当前情况", "已有其他处理方式", "成本过高", "其他"], input: true, placeholder: "补充说明（可选）", okText: "确认驳回" });
       if (!m) return;
       body.reason = m.option + (m.text ? "：" + m.text : "");
-    }
-    if (decision === "transfer" && !String(plan.exec_type).includes("转交")) {
-      const m = await ask({ title: "转交给", options: ["投放运营", "供应链", "商品主管"], okText: "转交" });
-      if (!m) return;
-      body.role = m.option;
+    } else {
+      // 转交单要用到的诊断结论与证据（只取与该方案同一原因的证据）
+      const causes = (result?.root_causes || []).filter((c: any) => c.cause === plan.cause || c.cause_name === plan.cause_name);
+      body.context = { summary: result?.summary, evidence: (causes.length ? causes : result?.root_causes || []).flatMap((c: any) => c.evidence.map((e: any) => e.text)) };
     }
     await api("/api/actions", { method: "POST", body });
-    message.success(decision === "reject" ? "已驳回" : decision === "transfer" ? "已转交，并附带诊断证据" : "已采纳，执行后请点「标记已执行」");
-    loadActs(); refreshMeta();
-  };
-
-  const exec = async (id: number) => {
-    await api(`/api/actions/${id}`, { method: "PATCH", body: { status: "executed" } });
-    message.success("已标记执行，平台将从今天起跟踪效果");
+    const needHelp = (plan.handoffs || []).length > 0;
+    message.success(decision === "reject" ? "已驳回" : needHelp ? "已采纳：你的步骤已列为待办，需要协同的部分请点「发送」" : "已采纳：完成全部步骤后自动开始跟踪效果");
     loadActs(); refreshMeta();
   };
 
@@ -147,7 +141,7 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
           ))}
           {r.plans.length > 0 && <div className="sec-title">动作方案 <span className="muted small" style={{ fontWeight: 400 }}>来自动作库，参数按本商品数据计算，已检查经营约束</span></div>}
           {r.plans.map((p: any, k: number) => (
-            <PlanCard key={p.action_id + k} p={p} i={k} act={acts[p.action_id]} onDecide={decide} onExec={exec} onMaterial={(pr, pl, lb) => chat(null, pr, pl, lb)} />
+            <PlanCard key={p.action_id + k} p={p} i={k} act={acts[p.action_id]} onDecide={decide} onChanged={() => { loadActs(); refreshMeta(); }} onMaterial={(pr, pl, lb) => chat(null, pr, pl, lb)} />
           ))}
           <div className="sec-title">数据局限</div>
           <ul className="lim">{r.limitations.map((x: string, k: number) => <li key={k}>{x}</li>)}</ul>

@@ -7,7 +7,7 @@ import json
 import re
 import time
 
-from core import config, sop, tools
+from core import actions, config, sop, tools
 from core.actions import completeness
 
 from .. import data, llm_client, state
@@ -111,7 +111,15 @@ def _step_event(s):
 
 
 def run(name: str, pid: str, refresh: bool = False):
-    """生成器：逐个产出 SSE 事件 dict。"""
+    """生成器：逐个产出 SSE 事件 dict；结果中的方案统一补齐步骤负责人与协同事项。"""
+    for ev in _run(name, pid, refresh):
+        if ev.get("type") == "result":
+            for p in ev["result"].get("plans") or []:
+                actions.annotate(p)
+        yield ev
+
+
+def _run(name: str, pid: str, refresh: bool = False):
     ds = data.ds_of(name)
     card = data.card_for(name, pid, today_only=True)
     key = cache_key(name, pid)
