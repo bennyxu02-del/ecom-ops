@@ -1,0 +1,30 @@
+# 指标拆解树
+# math：数学拆解，可精确计算贡献额；factor：影响因素，需要找证据判断
+root: gmv
+nodes:
+  gmv:
+    name: GMV
+    kind: math
+    op: multiply
+    children: [uv, cvr, aov]
+  uv:
+    name: 访客数
+    kind: math
+    op: sum
+    breakdown: channel          # 按渠道相加
+  cvr:
+    name: 支付转化率
+    kind: math
+    breakdown: variant          # 按规格看销量结构
+    factors: [stock, price, rating, campaign]   # 检查顺序由品类配置 factor_priority 决定
+  aov:
+    name: 客单价
+    kind: math
+    op: multiply
+    children: [unit_price, units_per_buyer]
+    factors: [promotion, coupon, variant_mix]
+factors:
+  stock: 库存（规格断货、可售天数）
+  price: 价格竞争力（价格指数、竞品调价）
+  rating: 口碑（评分、退款率、集中差评）
+  campaign: 活动力度（活动上下线）

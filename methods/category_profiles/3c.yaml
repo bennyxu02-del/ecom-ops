@@ -1,0 +1,19 @@
+id: 3c
+name: 3C 数码配件
+match: [3c, 3C, 数码, 数码配件, 3C数码配件]
+new_product_days: 30
+growth_days: 90
+margin_high: 0.40
+gmv_drop_yellow: 0.12
+gmv_drop_red: 0.20
+z_threshold: 2.2
+replenish_lead_days: 10
+price_gap: 0.03
+factor_priority: [price, stock, campaign, rating]
+action_prefs:
+  price_actions: [store_coupon, gift, price_match, bundle_discount]
+  gifts:
+    - {name: 收纳包, cost: 8, value: 29}
+    - {name: 数据线, cost: 6, value: 25}
+  enabled_optional: []
+seasonality_note: 价格敏感度高；618、双 11、数码节等大促前后波动大

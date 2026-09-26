@@ -1,0 +1,8 @@
+date,product_id,event_type,description,value
+2026-08-08,,promo_day,数码节大促,
+2026-09-12,P02,competitor_price_change,主要竞品到手价由 299 元降至 269 元,269.0
+2026-09-22,P01,restock,白色款补货在途，预计 9 月 22 日到货,3200.0
+2026-09-15,P03,ad_budget_change,付费推广日预算下调 50%,-0.5
+2026-09-15,P05,restock,1m 白色补货到货,12000.0
+2026-09-18,P06,external_content,达人测评视频发布，站外引流,
+2026-09-01,P04,campaign_start,新品上市,

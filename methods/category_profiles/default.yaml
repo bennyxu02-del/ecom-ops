@@ -1,0 +1,29 @@
+# 通用默认配置：数据中的品类匹配不到专属配置时使用
+id: default
+name: 通用消费品
+new_product_days: 30
+growth_days: 90
+margin_high: 0.35            # 利润品毛利率门槛（仅用于分层）
+gmv_drop_yellow: 0.12
+gmv_drop_red: 0.20
+z_threshold: 2.0
+baseline_days: 28
+replenish_lead_days: 7
+price_gap: 0.05
+stockout_share_min: 0.15
+rating_drop: 0.1
+factor_priority: [stock, price, rating, campaign]
+action_prefs:
+  price_actions: [store_coupon, gift, bundle_discount, price_match]
+  gifts:
+    - {name: 小赠品, cost: 5, value: 15}
+  enabled_optional: []       # 品类专属动作，默认不启用
+seasonality_note: 无
+
+# 经营约束：决定方案能否在企业内执行。演示为示例值，落地时按公司规则设置。
+constraints:
+  margin_floor: 0.25         # 毛利底线：价格类方案执行后毛利率不得低于此值
+  price_authority: 0.10      # 运营自主调价权限：单次到手价降幅上限，超出需审批
+  min_price_window: 90       # 最低价保护：到手价低于近 N 天最低成交价（含大促价）时需审批，避免破价
+  safety_days: 7             # 安全库存天数
+  campaign_signup_lead: 7    # 活动需提前报名的天数

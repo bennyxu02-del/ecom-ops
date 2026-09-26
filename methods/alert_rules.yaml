@@ -1,0 +1,62 @@
+# 预警规则库。阈值参数取自品类配置；coef 为生命周期阈值系数（见 tiering.yaml）
+# 观测窗口：近 7 日 vs 前 7 日（R01）；近 3 日日均 vs 前 28 天基线（R02/R03/R08）
+rules:
+  - id: R01
+    name: GMV 下滑
+    type: 阈值
+    condition: 近 7 日 GMV 较前 7 日下降 ≥ gmv_drop × coef
+    severity: 下降 ≥ gmv_drop_red × coef 为红，≥ gmv_drop_yellow × coef 为黄
+    cause_hint: 需诊断
+  - id: R02
+    name: 访客异常
+    type: 统计
+    condition: 近 3 日日均访客相对 28 天基线 z ≤ −z_threshold × coef
+    severity: 黄
+    cause_hint: 需诊断
+  - id: R03
+    name: 转化率异常
+    type: 统计
+    condition: 近 3 日支付转化率相对 28 天基线 z ≤ −z_threshold × coef
+    severity: 黄
+    cause_hint: 需诊断
+  - id: R04
+    name: 规格断货
+    type: 阈值
+    condition: 任一规格库存 = 0，且基准销量占比 ≥ stockout_share_min
+    severity: 占比 ≥ 30% 为红，否则黄
+    cause_hint: stockout
+  - id: R05
+    name: 断货风险
+    type: 预测
+    condition: 任一规格库存可售天数 < replenish_lead_days
+    severity: 低于补货周期一半为红，否则黄
+    cause_hint: stockout_risk
+  - id: R06
+    name: 价格劣势
+    type: 阈值
+    condition: 价格指数 > 1 + price_gap，持续 ≥ 2 天
+    severity: 黄
+    cause_hint: price_disadvantage
+  - id: R07
+    name: 口碑下滑
+    type: 阈值
+    condition: 评分较前 28 天均值下降 ≥ rating_drop，或近 7 日退款率 > 基线 × 1.5
+    severity: 黄
+    cause_hint: reputation_drop
+  - id: R08
+    name: 增长机会
+    type: 统计
+    condition: 近 3 日日均访客或 GMV 相对基线 z ≥ +z_threshold × coef
+    severity: 蓝
+    cause_hint: growth_opportunity
+
+extra:
+  - 爆品触发的黄色 R01 / R03 升级为红色
+  - 基线计算剔除事件表中标记的大促日（promo_day）
+  - 统计型规则要求基线期内至少 14 天有数据，否则只跑阈值规则
+
+merge:
+  - 同一商品同一天触发的规则合并为一张问题卡，严重度取最高
+  - 已有未关闭问题卡的商品次日继续触发时，只更新持续天数与最新指标
+  - 连续 3 天不再触发任何规则的问题卡自动标记为「已恢复」
+  - 被忽略的问题卡，同一规则 7 天内不再重复提醒，除非严重度升级

@@ -1,0 +1,4 @@
+date,product_id,event_type,description,value
+2026-09-12,S01,review_issue,某批次集中出现「结块、口感发酸」差评,
+2026-08-25,S02,campaign_start,中秋礼盒会场活动开始,
+2026-09-15,S02,campaign_end,中秋礼盒会场活动结束,

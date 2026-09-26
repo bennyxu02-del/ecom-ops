@@ -1,0 +1,14 @@
+# 运行时与本机文件（服务器上的这些内容更新时不会被覆盖）
+.env
+.venv
+state/*
+!state/.keep
+server/cache/*
+!server/cache/.keep
+warm.log
+*.log
+__pycache__/
+*.pyc
+node_modules/
+web/node_modules/
+.DS_Store
