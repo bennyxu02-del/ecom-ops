@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Badge, Menu, Select, Spin, Tooltip } from "antd";
-import { AlertOutlined, AppstoreOutlined, CheckSquareOutlined, DashboardOutlined, FileTextOutlined, ReadOutlined, TeamOutlined } from "@ant-design/icons";
+import { AlertOutlined, AppstoreOutlined, CheckSquareOutlined, DashboardOutlined, FileTextOutlined, ReadOutlined, TeamOutlined, ApiOutlined } from "@ant-design/icons";
 import { api, getDs, setDs } from "./api";
 import Overview from "./pages/Overview";
 import Products from "./pages/Products";
@@ -12,6 +12,7 @@ import Reports from "./pages/Reports";
 import ReportView from "./pages/ReportView";
 import Methods from "./pages/Methods";
 import Collab from "./pages/Collab";
+import Integrations from "./pages/Integrations";
 import HandoffView from "./pages/HandoffView";
 
 type Dataset = { id: string; name: string; as_of: string; products: number };
@@ -27,6 +28,7 @@ const NAV = [
   { key: "collab", label: "协同中心", icon: <TeamOutlined /> },
   { key: "reports", label: "报告中心", icon: <FileTextOutlined /> },
   { key: "methods", label: "方法库", icon: <ReadOutlined /> },
+  { key: "integrations", label: "集成", icon: <ApiOutlined /> },
 ];
 
 function ModelPill() {
@@ -102,6 +104,7 @@ function Shell() {
             <Route path="/report/:rid" element={<ReportView />} />
             <Route path="/methods" element={<Methods />} />
             <Route path="/collab" element={<Collab />} />
+            <Route path="/integrations" element={<Integrations />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Routes>
         )}

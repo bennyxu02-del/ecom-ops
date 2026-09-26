@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import io
+import threading
 import json
 import math
 import os
@@ -29,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 from core import actions as core_actions  # noqa: E402
 from core import sop, weekly  # noqa: E402
 
-from . import collab, data, llm_client, state  # noqa: E402
+from . import collab, data, feishu, llm_client, state  # noqa: E402
 from .agent import chat as chat_agent  # noqa: E402
 from .agent import diagnose, report  # noqa: E402
 from .product_report import render_product_report  # noqa: E402
@@ -132,6 +133,16 @@ class HandoffSend(BaseModel):
 class HandoffRespond(BaseModel):
     status: Literal["received", "done", "question", "approved", "declined"]
     note: Optional[str] = None
+    by: Optional[str] = None
+
+
+class FeishuRole(BaseModel):
+    name: str = ""
+    contact: str = Field(..., description="对方飞书账号绑定的手机号或邮箱")
+
+
+class FeishuTest(BaseModel):
+    role: str
 
 
 class ActionUpdate(BaseModel):
@@ -282,8 +293,23 @@ def api_actions(ds: str = DS, product_id: Optional[str] = None):
     return [_decorate_action(name, a) for a in state.list_actions(name, product_id)]
 
 
-def _base_url(request: Request) -> str:
-    return os.environ.get("PUBLIC_BASE_URL") or str(request.base_url)
+def _base_url(request: Request | None = None) -> str | None:
+    """对外访问地址：优先环境变量；否则取浏览器访问的地址并记住（供飞书回调等内部请求复用）。"""
+    if os.environ.get("PUBLIC_BASE_URL"):
+        return os.environ["PUBLIC_BASE_URL"]
+    if request is not None:
+        host = request.url.hostname or ""
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            url = str(request.base_url)
+            if state.get_setting("public_base_url") != url:
+                state.set_setting("public_base_url", url)
+            return url
+    return state.get_setting("public_base_url") or (str(request.base_url) if request is not None else None)
+
+
+def _link(hid: int, request: Request | None = None) -> str | None:
+    b = _base_url(request)
+    return f"{b.rstrip('/')}/#/h/{hid}" if b else None
 
 
 @app.post("/api/actions", tags=["行动跟踪"])
@@ -322,7 +348,58 @@ def api_action_step(aid: int, body: StepUpdate):
 # ---------------- 集成 ----------------
 @app.get("/api/integrations/feishu", tags=["集成"])
 def api_feishu_status():
-    return dict(enabled=False, ready=False, roles={})
+    return feishu.status()
+
+
+@app.put("/api/integrations/feishu/roles/{role}", tags=["集成"], summary="设置角色对应的飞书成员（按手机号或邮箱查找）")
+def api_feishu_role(role: str, body: FeishuRole):
+    if role not in feishu.ROLES:
+        raise HTTPException(400, "未知角色")
+    try:
+        feishu.set_role(role, body.name, body.contact)
+    except feishu.FeishuError as e:
+        raise HTTPException(400, str(e))
+    return feishu.status()
+
+
+@app.delete("/api/integrations/feishu/roles/{role}", tags=["集成"])
+def api_feishu_role_del(role: str):
+    feishu.clear_role(role)
+    return feishu.status()
+
+
+@app.post("/api/integrations/feishu/test", tags=["集成"], summary="给某个角色发一条测试消息")
+def api_feishu_test(body: FeishuTest):
+    r = feishu.roles().get(body.role)
+    if not r:
+        raise HTTPException(400, f"还没有设置「{body.role}」对应的飞书成员")
+    try:
+        feishu.send_text(r["open_id"], f"【经营作战台】测试消息：你已被设置为「{body.role}」，之后相关的协同请求会发到这里。")
+    except feishu.FeishuError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True)
+
+
+def _feishu_sync(hid: int, request: Request | None = None, notify: bool = True):
+    """协同状态变化后：刷新对方飞书里的卡片；把进展通知发起人。失败不影响主流程。"""
+    if not feishu.enabled():
+        return
+    h = collab.decorate_handoff(state.get_handoff(hid), with_context=True)
+    try:
+        if h.get("ext_id"):
+            feishu.update_card(h["ext_id"], feishu.build_card(h, _link(hid, request)))
+    except feishu.FeishuError as e:
+        print("[feishu] 更新卡片失败：", e, flush=True)
+    me = feishu.roles().get("我")
+    if notify and me and h["status"] != "sent":
+        last = (h.get("history") or [{}])[-1]
+        text = (f"【协同进展】{h['role']} {h['status_name']}：{(h.get('action') or {}).get('product_name', '')}"
+                f" · {(h.get('action') or {}).get('name', '')}" + (f"\n说明：{last.get('note')}" if last.get("note") else "")
+                + (f"\n查看：{_link(hid, request)}" if _link(hid, request) else ""))
+        try:
+            feishu.send_text(me["open_id"], text)
+        except feishu.FeishuError as e:
+            print("[feishu] 通知发起人失败：", e, flush=True)
 
 
 # ---------------- 协同 ----------------
@@ -353,21 +430,37 @@ def api_handoff_put(hid: int, body: HandoffPut):
 
 
 @app.post("/api/handoffs/{hid}/send", tags=["协同"])
-def api_handoff_send(hid: int, body: HandoffSend):
-    _handoff_or_404(hid)
+def api_handoff_send(hid: int, body: HandoffSend, request: Request):
+    h0 = _handoff_or_404(hid)
     if body.channel == "feishu":
-        raise HTTPException(400, "飞书集成尚未配置")
+        r = feishu.roles().get(h0["role"])
+        if not feishu.enabled() or not r:
+            raise HTTPException(400, f"飞书未配置，或还没有设置「{h0['role']}」对应的飞书成员")
+        if body.message:
+            state.update_handoff(hid, message=body.message)
+        h = collab.decorate_handoff(state.get_handoff(hid), with_context=True)
+        h["status"] = "sent"
+        try:
+            mid = feishu.send_card(r["open_id"], feishu.build_card(h, _link(hid, request)))
+        except feishu.FeishuError as e:
+            raise HTTPException(400, str(e))
+        state.update_handoff(hid, assignee=r.get("name"))
+        collab.mark_sent(hid, "feishu", body.message, ext_id=mid)
+        return collab.decorate_handoff(state.get_handoff(hid), with_context=True)
     collab.mark_sent(hid, body.channel, body.message)
     return collab.decorate_handoff(state.get_handoff(hid), with_context=True)
 
 
 @app.post("/api/handoffs/{hid}/respond", tags=["协同"], summary="协同方处理：已接收 / 已完成 / 有疑问 / 批准 / 驳回")
-def api_handoff_respond(hid: int, body: HandoffRespond):
+def api_handoff_respond(hid: int, body: HandoffRespond, request: Request):
     _handoff_or_404(hid)
     try:
-        h = collab.respond(hid, body.status, body.note)
+        h = collab.respond(hid, body.status, body.note, by=body.by)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # 飞书卡片刷新与通知放到后台，避免拖慢响应（飞书要求按钮回调 3 秒内返回）
+    _base_url(request)  # 在请求线程内记下对外访问地址，供后台线程生成链接
+    threading.Thread(target=_feishu_sync, args=(hid, None), daemon=True).start()
     return collab.decorate_handoff(h, with_context=True)
 
 

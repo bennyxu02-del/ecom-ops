@@ -41,6 +41,9 @@ main() {
 
   echo "==> 重启服务"
   systemctl restart ecom-ops
+  if systemctl list-unit-files ecom-ops-feishu.service >/dev/null 2>&1 && [ -f /etc/systemd/system/ecom-ops-feishu.service ]; then
+    systemctl restart ecom-ops-feishu
+  fi
   sleep 6
   PORT=$(grep '^PORT=' .env | cut -d= -f2)
   if curl -sf "http://127.0.0.1:${PORT:-80}/api/health" >/dev/null; then

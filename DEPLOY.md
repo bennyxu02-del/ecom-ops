@@ -97,3 +97,17 @@ cd /opt/ecom-ops && bash deploy/setup_git.sh
 | 回退到某个版本（如 v2） | `bash /opt/ecom-ops/deploy/update.sh v2` |
 
 `.env`（模型密钥）、`state/`（运行状态和 AI 缓存）、`.venv`（Python 环境）不在仓库里，更新时不会被改动。
+
+## 飞书集成（可选）
+
+平台可以把转交单、审批申请和进展通知直接发到同事的飞书，对方在卡片上点按钮，状态同步回平台。
+
+1. 在飞书开放平台建一个企业自建应用：开通「机器人」能力，开通权限 `im:message:send_as_bot`、`contact:user.id:readonly`，发布版本。
+2. 在服务器执行 `cd /opt/ecom-ops && bash deploy/setup_feishu.sh`，输入 App ID 和 App Secret。脚本会启动卡片回调服务 `ecom-ops-feishu`。
+3. 回到飞书开放平台：「事件与回调」→「回调配置」→ 订阅方式选「使用长连接接收回调」并保存 → 添加回调「卡片回传交互」（card.action.trigger）→ 创建新版本并发布。
+4. 打开平台左侧「集成」页，给各角色设置对应的飞书成员（手机号或邮箱），可以点「发测试消息」确认。
+
+| 操作 | 命令 |
+| --- | --- |
+| 查看回调服务状态 | `systemctl status ecom-ops-feishu` |
+| 查看回调服务日志 | `journalctl -u ecom-ops-feishu -n 100` |
