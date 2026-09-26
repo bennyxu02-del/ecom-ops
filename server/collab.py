@@ -23,7 +23,7 @@ HANDOFF_STATUS = {
     "approval": {"draft": "待发送", "sent": "待审批", "approved": "已批准", "declined": "已驳回", "question": "有疑问"},
 }
 ACTION_STATUS = {"adopted": "进行中", "executed": "已执行", "transferred": "已转交", "rejected": "已驳回",
-                 "declined": "审批未通过"}
+                 "declined": "审批未通过", "cancelled": "已取消"}
 RESPONSES = {"transfer": {"received", "done", "question"}, "approval": {"approved", "declined", "question"}}
 
 
@@ -77,21 +77,22 @@ def compose(kind: str, role: str, plan: dict, step_idx: list[int], context: dict
 # ---------------------------------------------------------------------------
 # 采纳时创建协同事项
 # ---------------------------------------------------------------------------
-def create_for_action(name: str, action_row: int, plan: dict, context: dict, base_url: str | None):
+def create_for_action(name: str, action_row: int, plan: dict, context: dict, base_url: str | None,
+                      due: str | None = None):
     ds = data.ds_of(name)
     core_actions.annotate(plan)
     as_of = ds.as_of.date() if hasattr(ds.as_of, "date") else ds.as_of
     product_name = ds.product(plan_pid(plan, action_row))["product_name"]
     roles = state.get_setting("feishu_roles", {}) or {}
     for h in plan.get("handoffs") or []:
-        due = (as_of if h["kind"] == "approval" else as_of + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+        h_due = due or (as_of if h["kind"] == "approval" else as_of + dt.timedelta(days=1)).strftime("%Y-%m-%d")
         hid = state.add_handoff(ds=name, action_row=action_row, product_id=plan_pid(plan, action_row), kind=h["kind"],
                                 role=h["role"], assignee=(roles.get(h["role"]) or {}).get("name"),
-                                steps_json=json.dumps(h["steps"]), message="", status="draft", channel=None, due=due,
-                                history_json=json.dumps([dict(t=time.time(), status="draft", by="系统", note="采纳方案时创建")],
+                                steps_json=json.dumps(h["steps"]), message="", status="draft", channel=None, due=h_due,
+                                history_json=json.dumps([dict(t=time.time(), status="draft", by="系统", note="创建待办时生成")],
                                                         ensure_ascii=False))
         link = f"{base_url.rstrip('/')}/#/h/{hid}" if base_url else None
-        msg = compose(h["kind"], h["role"], plan, h["steps"], context, product_name, due, link)
+        msg = compose(h["kind"], h["role"], plan, h["steps"], context, product_name, h_due, link)
         state.update_handoff(hid, message=msg)
 
 
@@ -143,7 +144,7 @@ def set_step(action_row: int, index: int, done: bool):
 def _refresh_action(name: str, action_row: int):
     """按我的步骤与协同事项的状态更新动作整体状态。"""
     a = state.get_action(action_row)
-    if not a or a["status"] in ("rejected", "executed"):
+    if not a or a["status"] in ("rejected", "executed", "cancelled"):
         return
     hs = state.list_handoffs(action_row=action_row)
     if any(h["kind"] == "approval" and h["status"] == "declined" for h in hs):
@@ -154,6 +155,7 @@ def _refresh_action(name: str, action_row: int):
     if progress(a, hs)["complete"]:
         today = data.ds_of(name).as_of.strftime("%Y-%m-%d")
         state.update_action(action_row, status="executed", exec_date=today)
+        add_log(action_row, "步骤与协同全部完成，自动记为已执行", by="系统")
 
 
 def progress(a: dict, hs: list[dict]) -> dict:
@@ -190,8 +192,23 @@ def decorate_handoff(h: dict, with_context: bool = False) -> dict:
     return h
 
 
+def add_log(action_row: int, text: str, by: str = "我"):
+    a = state.get_action(action_row)
+    if not a:
+        return
+    log = _loads(a.get("log_json"), [])
+    log.append(dict(t=time.time(), by=by, text=text))
+    state.update_action(action_row, log_json=json.dumps(log, ensure_ascii=False))
+
+
+SOURCE_NAMES = {"diagnosis": "AI 诊断", "chat": "追问", "manual": "手动新建"}
+
+
 def decorate_action(a: dict) -> dict:
     hs = state.list_handoffs(action_row=a["id"])
+    a["log"] = _loads(a.pop("log_json", None), [])
+    a["source"] = a.get("source") or "diagnosis"
+    a["source_name"] = SOURCE_NAMES.get(a["source"], a["source"])
     a["handoffs"] = [decorate_handoff(h) for h in hs]
     p = progress(a, hs)
     a["progress"] = p

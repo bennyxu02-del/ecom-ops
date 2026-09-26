@@ -56,7 +56,7 @@ export default function HandoffSendModal({ handoff, onClose, onSent }: { handoff
         )}
       </Space>}>
       <div className="small muted" style={{ marginBottom: 8 }}>
-        内容已根据诊断结论自动生成，可以直接修改。{approval ? "对方批准后，你的步骤才能开始执行。" : "对方处理完成后，状态会同步回平台。"}
+        内容已自动生成，可以直接修改。{approval ? "对方批准后，你的步骤才能开始执行。" : "对方处理完成后，状态会同步回平台。"}
       </div>
       <Input.TextArea value={text} onChange={e => setText(e.target.value)} autoSize={{ minRows: 10, maxRows: 18 }} />
     </Modal>

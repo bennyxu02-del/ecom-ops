@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Card, Input, Spin, Tag } from "antd";
-import { CheckOutlined, DownOutlined, FileTextOutlined, ReloadOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
+import { CheckCircleFilled, CheckOutlined, DownOutlined, PlusCircleOutlined, FileTextOutlined, ReloadOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
+import { Link, useNavigate } from "react-router-dom";
 import { api, sse } from "../api";
 import { useApp } from "../App";
 import AnalysisPath from "./AnalysisPath";
 import Markdown from "./Markdown";
 import PlanCard from "./PlanCard";
 import ReasonModal, { ReasonSpec } from "./ReasonModal";
+import TodoModal, { TodoDraft } from "./TodoModal";
 
 type Step = { text: string; done: boolean };
-type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[] };
+type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[]; preset?: boolean; done?: boolean; noai?: boolean; todo?: TodoDraft | null; created?: any; drafting?: boolean; q?: string };
 
 function StepList({ steps, running }: { steps: Step[]; running: boolean }) {
   return (
@@ -37,6 +38,7 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [showSteps, setShowSteps] = useState(false);
+  const [todoFor, setTodoFor] = useState<{ idx: number; draft: TodoDraft; context: any } | null>(null);
   const [modal, setModal] = useState<{ spec: ReasonSpec; resolve: (v: { option: string; text: string } | null) => void } | null>(null);
   const history = useRef<{ role: string; content: string }[]>([]);
   const abort = useRef<AbortController | null>(null);
@@ -99,19 +101,32 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
     const shown = preset ? `请起草：${label}` : text!;
     if (!preset) history.current.push({ role: "user", content: text! });
     setQ("");
-    setMsgs(m => [...m, { role: "user", text: shown }, { role: "assistant", text: "", pending: "正在思考…" }]);
+    setMsgs(m => [...m, { role: "user", text: shown }, { role: "assistant", text: "", pending: "正在思考…", preset: !!preset, q: preset ? undefined : text! }]);
     const upd = (f: (m: Msg) => Msg) => setMsgs(ms => ms.map((m, i) => (i === ms.length - 1 ? f(m) : m)));
     let out = "";
     try {
       await sse(`/api/chat/${pid}`, { messages: history.current, preset, plan }, ev => {
         if (ev.type === "step") upd(m => ({ ...m, pending: ev.summary }));
         if (ev.type === "delta") { out += ev.text; upd(m => ({ ...m, text: out, pending: null })); }
-        if (ev.type === "result") upd(m => ({ ...m, pending: null, unmatched: ev.unmatched_numbers || [] }));
+        if (ev.type === "result") upd(m => ({ ...m, pending: null, unmatched: ev.unmatched_numbers || [], done: true, noai: ev.source === "none", todo: ev.todo || null }));
         if (ev.type === "error") upd(m => ({ ...m, pending: null, text: "出错了：" + ev.message }));
       });
     } catch (e: any) { upd(m => ({ ...m, pending: null, text: "出错了：" + e.message })); }
     if (!preset) history.current.push({ role: "assistant", content: out });
     setBusy(false);
+  };
+
+  const setMsg = (idx: number, f: (m: Msg) => Msg) => setMsgs(ms => ms.map((m, i) => (i === idx ? f(m) : m)));
+  const todoContext = (m: Msg) => ({ summary: (m.text.split(/(?<=[。！？\n])/)[0] || "").replace(/[*#`]/g, "").trim().slice(0, 140) || undefined });
+  const toTodo = async (idx: number) => {
+    const m = msgs[idx];
+    if (m.todo) { setTodoFor({ idx, draft: m.todo, context: todoContext(m) }); return; }
+    setMsg(idx, x => ({ ...x, drafting: true }));
+    try {
+      const upto = history.current.slice(0, history.current.findIndex(h => h.role === "assistant" && h.content === m.text) + 1);
+      const draft = await api<TodoDraft>(`/api/chat/${pid}/todo-draft`, { method: "POST", body: { messages: upto.length ? upto : [{ role: "user", content: m.q || "" }], reply: m.text } });
+      setTodoFor({ idx, draft, context: todoContext(m) });
+    } catch (e: any) { message.error(e.message); } finally { setMsg(idx, x => ({ ...x, drafting: false })); }
   };
 
   const productReport = async () => {
@@ -186,6 +201,17 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
                           {m.pending && <span className="muted"><Spin size="small" /> {m.pending}</span>}
                           {m.text && <Markdown text={m.text} marks={m.unmatched} />}
                           {m.unmatched && m.unmatched.length > 0 && <div className="small" style={{ color: "#7a5000", marginTop: 4 }}>⚠ 未核对到的数字：{m.unmatched.join("、")}</div>}
+                      {m.done && !m.noai && !m.preset && m.text && (m.created ? (
+                        <div className="m-ops"><CheckCircleFilled style={{ color: "#0ca30c" }} />已加入待办「{m.created.name}」<Link to={`/actions?open=${m.created.id}`}>查看</Link></div>
+                      ) : m.todo ? (
+                        <div className="todo-sug">
+                          <div className="h"><PlusCircleOutlined style={{ color: "#7c5cd6" }} />建议待办：{m.todo.name}</div>
+                          <ol>{(m.todo.steps || []).map((st, j) => <li key={j}><Tag bordered={false} color={st.by === "我" ? "blue" : "orange"} style={{ marginRight: 6 }}>{st.by}</Tag>{st.text}</li>)}</ol>
+                          <Button size="small" type="primary" onClick={() => toTodo(k)}>加入待办</Button>
+                        </div>
+                      ) : (
+                        <div className="m-ops"><Button size="small" type="link" style={{ padding: 0 }} icon={<PlusCircleOutlined />} loading={m.drafting} onClick={() => toTodo(k)}>转为待办</Button></div>
+                      ))}
                         </>
                       )}
                     </div>
@@ -200,6 +226,9 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
           </div>
         </>
       )}
+      <TodoModal open={!!todoFor} source="chat" productId={pid} draft={todoFor?.draft} context={todoFor?.context}
+        onClose={() => setTodoFor(null)}
+        onCreated={a => { if (todoFor) setMsg(todoFor.idx, x => ({ ...x, created: a })); setTodoFor(null); loadActs(); }} />
       <ReasonModal spec={modal?.spec || null}
         onOk={(option, text) => { modal?.resolve({ option, text }); setModal(null); }}
         onCancel={() => { modal?.resolve(null); setModal(null); }} />

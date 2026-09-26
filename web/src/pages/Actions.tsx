@@ -1,46 +1,62 @@
+import { useEffect, useState } from "react";
 import { App, Button, Card, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Link } from "react-router-dom";
+import { PlusOutlined } from "@ant-design/icons";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../App";
 import { Delta, num } from "../format";
 import { HandoffTag } from "../components/HandoffSendModal";
+import ActionDrawer, { SourceTag, isOverdue, statusColor } from "../components/ActionDrawer";
+import TodoModal from "../components/TodoModal";
 import { Loading, useLoad } from "../hooks";
 
 const uniq = (xs: any[]) => [...new Set(xs)].filter(Boolean).map(v => ({ text: v, value: v }));
 
 export default function Actions() {
-  const { data, error, reload } = useLoad<any[]>("/api/actions");
+  const { data, error, reload, setData } = useLoad<any[]>("/api/actions");
   const { message } = App.useApp();
-  const { refreshMeta } = useApp();
+  const { refreshMeta, asOf } = useApp();
+  const [sp, setSp] = useSearchParams();
+  const [openId, setOpenId] = useState<number | null>(sp.get("open") ? Number(sp.get("open")) : null);
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => { if (sp.get("open")) { sp.delete("open"); setSp(sp, { replace: true }); } }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   if (!data) return <Loading error={error} />;
 
-  const exec = async (id: number) => {
+  const exec = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
     await api(`/api/actions/${id}`, { method: "PATCH", body: { status: "executed" } });
     message.success("已标记执行，平台将从今天起跟踪效果");
     reload(); refreshMeta();
   };
+  const upsert = (a: any) => setData(xs => { const has = (xs || []).some(x => x.id === a.id); return has ? xs!.map(x => x.id === a.id ? a : x) : [a, ...(xs || [])]; });
   const f = (a: any, v: any) => v == null ? "—" : a.track_metric === "cvr" ? (v * 100).toFixed(2) + "%" : num(v);
+  const open = data.find(a => a.id === openId) || null;
 
   const columns: ColumnsType<any> = [
-    { title: "商品", dataIndex: "product_name", width: 170, render: (n, a) => <Link to={"/product/" + a.product_id}>{n}</Link> },
-    { title: "方案", dataIndex: "name", width: 230, render: (n, a) => <>{n}<div className="muted small">{a.target || ""}</div></> },
-    { title: "原因", dataIndex: "cause_name", width: 110, filters: uniq(data.map(a => a.cause_name)), onFilter: (v, a) => a.cause_name === v },
-    { title: "分工与进度", key: "prog", width: 230, render: (_, a) => {
+    { title: "商品", dataIndex: "product_name", width: 160, render: (n, a) => <Link to={"/product/" + a.product_id} onClick={e => e.stopPropagation()}>{n}</Link> },
+    { title: "待办", dataIndex: "name", width: 250, render: (n, a) => <>
+        <div className="todo-name">{n}</div>
+        <div className="muted small" style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}><SourceTag a={a} />{a.cause_name}</div>
+      </> },
+    { title: "分工与进度", key: "prog", width: 210, render: (_, a) => {
         const p = a.progress || {};
-        if (a.status === "rejected") return <span className="muted">—</span>;
+        if (["rejected", "cancelled"].includes(a.status)) return <span className="muted">—</span>;
         return <div style={{ display: "grid", gap: 4 }}>
           {p.mine?.length > 0 && <span className="small">我的步骤 {a.status === "executed" && !a.step_done?.length ? p.mine.length : p.mine_done.length}/{p.mine.length}</span>}
           {(a.handoffs || []).map((h: any) => <span key={h.id} className="small">{h.kind_name} · {h.role} <HandoffTag h={h} /></span>)}
           {!p.mine?.length && !(a.handoffs || []).length && <span className="small muted">{a.exec_type}{a.owner_role ? ` · ${a.owner_role}` : ""}</span>}
         </div>;
       } },
-    { title: "状态", dataIndex: "status_name", width: 130, filters: uniq(data.map(a => a.status_name)), onFilter: (v, a) => a.status_name === v,
-      render: (s, a) => <><Tag bordered={false} color={a.status === "executed" ? "success" : a.status === "rejected" || a.status === "declined" ? "default" : "processing"}>{s}</Tag>
+    { title: "状态", dataIndex: "status_name", width: 120, filters: uniq(data.map(a => a.status_name)), onFilter: (v, a) => a.status_name === v,
+      render: (s, a) => <><Tag bordered={false} color={statusColor(a.status)}>{s}</Tag>
         {a.reject_reason && <div className="muted small">{a.reject_reason}</div>}</> },
-    { title: "采纳 / 执行", dataIndex: "adopted_date", width: 140, sorter: (a, b) => (a.adopted_date || "").localeCompare(b.adopted_date || ""),
+    { title: "截止", dataIndex: "due_date", width: 110, sorter: (a, b) => (a.due_date || "9").localeCompare(b.due_date || "9"),
+      render: (d, a) => d ? <span className="num small">{d}{isOverdue(a, asOf) && <div><Tag color="error" bordered={false} style={{ marginTop: 2 }}>已逾期</Tag></div>}</span> : <span className="muted">—</span> },
+    { title: "采纳 / 执行", dataIndex: "adopted_date", width: 130, sorter: (a, b) => (a.adopted_date || "").localeCompare(b.adopted_date || ""),
       render: (_, a) => <span className="num small" style={{ whiteSpace: "nowrap" }}>采纳 {a.adopted_date || "—"}<br />执行 {a.exec_date || "—"}</span> },
-    { title: "效果跟踪（执行前 → 后）", key: "effect", width: 220,
+    { title: "效果跟踪（执行前 → 后）", key: "effect", width: 200,
       render: (_, a) => {
         const e = a.effect;
         if (!e?.metric_name) return <span className="muted">—</span>;
@@ -50,16 +66,23 @@ export default function Actions() {
       } },
     { title: "", key: "op", width: 110,
       render: (_, a) => (a.status === "adopted" || (a.status === "transferred" && !a.exec_date))
-        ? <Button size="small" onClick={() => exec(a.id)} style={{ borderColor: "#0ca30c", color: "#0ca30c" }}>标记已执行</Button> : null },
+        ? <Button size="small" onClick={e => exec(e, a.id)} style={{ borderColor: "#0ca30c", color: "#0ca30c" }}>标记已执行</Button> : null },
   ];
 
   return (
     <>
-      <div className="page-head"><div><h1>行动跟踪</h1>
-        <div className="sub">记录每个方案的处理结果；我的步骤和协同事项全部完成后，自动对比执行前后的跟踪指标（前后对比，不等同于严格的因果效果）</div></div></div>
+      <div className="page-head">
+        <div><h1>行动跟踪</h1>
+          <div className="sub">AI 诊断方案、追问中产生的事项和手动新建的待办都在这里跟进；点击任意一行查看详情或编辑</div></div>
+        <div className="right"><Button type="primary" icon={<PlusOutlined />} onClick={() => setCreating(true)}>新建待办</Button></div>
+      </div>
       <Card styles={{ body: { padding: 0 } }}>
-        <Table rowKey="id" dataSource={data} columns={columns} pagination={false} scroll={{ x: 1270 }} locale={{ emptyText: "暂无动作记录" }} />
+        <Table rowKey="id" dataSource={data} columns={columns} pagination={false} scroll={{ x: 1290 }} locale={{ emptyText: "暂无待办" }}
+          rowClassName={() => "clickable"} onRow={a => ({ onClick: () => setOpenId(a.id) })} />
       </Card>
+      <ActionDrawer action={open} onClose={() => setOpenId(null)} onChanged={a => a && upsert(a)} />
+      <TodoModal open={creating} source="manual" onClose={() => setCreating(false)}
+        onCreated={a => { setCreating(false); upsert(a); setOpenId(a.id); }} />
     </>
   );
 }

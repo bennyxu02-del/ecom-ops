@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 from core import actions as core_actions  # noqa: E402
 from core import sop, weekly  # noqa: E402
 
-from . import collab, data, feishu, llm_client, state  # noqa: E402
+from . import collab, data, feishu, llm_client, state, todos  # noqa: E402
 from .agent import chat as chat_agent  # noqa: E402
 from .agent import diagnose, report  # noqa: E402
 from .product_report import render_product_report  # noqa: E402
@@ -146,8 +146,33 @@ class FeishuTest(BaseModel):
 
 
 class ActionUpdate(BaseModel):
-    status: Literal["executed", "adopted", "transferred", "rejected"]
+    status: Optional[Literal["executed", "adopted", "transferred", "rejected", "cancelled"]] = None
     exec_date: Optional[str] = None
+    name: Optional[str] = None
+    due_date: Optional[str] = None
+    note: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class TodoStep(BaseModel):
+    text: str
+    by: str = "我"
+
+
+class TodoCreate(BaseModel):
+    product_id: str
+    name: str
+    steps: list[TodoStep]
+    due_date: Optional[str] = None
+    track_metric: Optional[str] = "gmv"
+    note: Optional[str] = None
+    source: Literal["chat", "manual"] = "manual"
+    context: Optional[dict] = None
+
+
+class TodoDraft(BaseModel):
+    messages: list[dict] = []
+    reply: str
 
 
 class ReportPut(BaseModel):
@@ -329,7 +354,9 @@ def api_action_create(body: ActionCreate, request: Request, ds: str = DS):
                            transfer_role=None, context_json=dumps(body.context or {}),
                            track_metric=(plan.get("track") or {}).get("metric"),
                            variant=(plan.get("params") or {}).get("variant"),
-                           adopted_date=today if body.decision != "reject" else None)
+                           adopted_date=today if body.decision != "reject" else None, source="diagnosis",
+                           due_date=todos.default_due(name) if body.decision != "reject" else None)
+    collab.add_log(aid, "驳回 AI 诊断方案：" + (body.reason or "") if body.decision == "reject" else "采纳 AI 诊断方案")
     if body.decision != "reject":
         collab.create_for_action(name, aid, plan, body.context or {}, _base_url(request))
     if body.card_id and body.decision != "reject":
@@ -464,16 +491,36 @@ def api_handoff_respond(hid: int, body: HandoffRespond, request: Request):
     return collab.decorate_handoff(h, with_context=True)
 
 
-@app.patch("/api/actions/{aid}", tags=["行动跟踪"])
+@app.patch("/api/actions/{aid}", tags=["行动跟踪"], summary="编辑待办：名称、截止日期、备注、状态")
 def api_action_update(aid: int, body: ActionUpdate, ds: str = DS):
-    if not state.get_action(aid):
+    name = ds_name(ds)
+    try:
+        todos.update(name, aid, title=body.name, due_date=body.due_date, note=body.note, status=body.status,
+                     exec_date=body.exec_date, reason=body.reason)
+    except KeyError:
         raise HTTPException(404, "动作不存在")
-    if body.status == "executed":
-        state.update_action(aid, status="executed",
-                            exec_date=body.exec_date or data.ds_of(ds_name(ds)).as_of.strftime("%Y-%m-%d"))
-    else:
-        state.update_action(aid, status=body.status)
-    return dict(ok=True)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _decorate_action(name, state.get_action(aid))
+
+
+@app.post("/api/todos", tags=["行动跟踪"], summary="新建待办（手动 / 来自追问）")
+def api_todo_create(body: TodoCreate, request: Request, ds: str = DS):
+    name = ds_name(ds)
+    try:
+        aid = todos.create(name, body.product_id, body.name, [s.model_dump() for s in body.steps], body.due_date,
+                           body.track_metric, body.note, body.source, body.context, _base_url(request))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _decorate_action(name, state.get_action(aid))
+
+
+@app.post("/api/chat/{pid}/todo-draft", tags=["AI"], summary="把一条追问回复整理成待办草稿")
+def api_todo_draft(pid: str, body: TodoDraft, ds: str = DS):
+    name = ds_name(ds)
+    if pid not in data.ds_of(name).product_ids():
+        raise HTTPException(404, f"未知商品 {pid}")
+    return todos.draft_from_chat(name, pid, body.messages, body.reply)
 
 
 # ---------------- 报告 ----------------

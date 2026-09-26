@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 """
 
 # 旧库升级：补列
-MIGRATIONS = [("actions", "step_done", "TEXT"), ("actions", "context_json", "TEXT")]
+MIGRATIONS = [("actions", "step_done", "TEXT"), ("actions", "context_json", "TEXT"), ("actions", "due_date", "TEXT"),
+              ("actions", "note", "TEXT"), ("actions", "source", "TEXT"), ("actions", "log_json", "TEXT")]
 
 
 def conn() -> sqlite3.Connection:

@@ -16,8 +16,8 @@ import Integrations from "./pages/Integrations";
 import HandoffView from "./pages/HandoffView";
 
 type Dataset = { id: string; name: string; as_of: string; products: number };
-type Ctx = { ds: string; refreshMeta: () => void };
-const AppCtx = createContext<Ctx>({ ds: "3c", refreshMeta: () => {} });
+type Ctx = { ds: string; asOf: string; refreshMeta: () => void };
+const AppCtx = createContext<Ctx>({ ds: "3c", asOf: "", refreshMeta: () => {} });
 export const useApp = () => useContext(AppCtx);
 
 const NAV = [
@@ -71,7 +71,7 @@ function Shell() {
   const cur = datasets.find(d => d.id === ds);
 
   return (
-    <AppCtx.Provider value={{ ds, refreshMeta }}>
+    <AppCtx.Provider value={{ ds, asOf: cur?.as_of || "", refreshMeta }}>
       <header className="topbar">
         <div className="brand"><div className="logo">作</div><span className="name">重点商品经营作战台</span> <small>AI 盯盘 · 诊断 · 周报</small></div>
         <Select value={ds} style={{ width: 200 }} aria-label="切换数据集"

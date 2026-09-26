@@ -13,7 +13,8 @@ from . import diagnose, prompts, verify
 def _actions_for_pack(name):
     ds = data.ds_of(name)
     out = []
-    names = {"adopted": "已采纳待执行", "executed": "已执行", "transferred": "已转交", "rejected": "已驳回"}
+    names = {"adopted": "已采纳待执行", "executed": "已执行", "transferred": "已转交", "rejected": "已驳回",
+             "declined": "审批未通过", "cancelled": "已取消"}
     for a in state.list_actions(name):
         out.append(dict(card_id=a["card_id"], product_id=a["product_id"], product_name=a["product_name"], name=a["name"],
                         cause_name=a.get("cause_name"),

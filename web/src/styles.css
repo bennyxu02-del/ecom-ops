@@ -221,3 +221,15 @@ textarea.editor { width: 100%; min-height: 560px; font: 13px/1.7 ui-monospace, S
   .ai-col + .ai-col { border-left: 0; padding-left: 0; margin-top: 16px; }
 }
 @media (max-width: 760px) { .detail-head .to-ai { order: 3; margin-left: 0; } .detail-head .to-ai + .hs { margin-left: 0; } }
+
+/* 待办 */
+.ant-table-row.clickable { cursor: pointer; }
+.todo-name { font-weight: 500; }
+.todo-steps .ts { display: grid; grid-template-columns: 18px minmax(0, 1fr) 112px 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
+.todo-steps .ts .idx { color: var(--text-3); text-align: right; font-size: 12px; }
+.todo-sug { margin-top: 8px; border: 1px solid #d9d0f5; background: #faf8ff; border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.todo-sug .h { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 4px; }
+.todo-sug ol { margin: 0 0 6px; padding-left: 18px; color: var(--text-2); }
+.todo-sug ol li { margin: 2px 0; }
+.chat .m .m-ops { margin-top: 6px; display: flex; gap: 10px; align-items: center; font-size: 12.5px; }
+@media (max-width: 640px) { .todo-steps .ts { grid-template-columns: 14px minmax(0, 1fr) 92px 28px; gap: 6px; } }

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 
 from core import sop, tools
 
-from .. import data, llm_client, state
+from .. import data, llm_client, state, todos
 from . import diagnose, prompts, verify
 
 MAX_CALLS = 5
@@ -33,11 +34,16 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
         yield dict(type="result", text=text, source="cache" if c else "none")
         return
     chat, _ = diagnose.backend(name)
-    msgs = [{"role": "system", "content": prompts.chat_system(ds, pid, diag_res)}] + history
+    sysmsg = prompts.chat_system(ds, pid, diag_res) + ("" if preset else "\n" + todos.SUGGEST_RULE)
+    msgs = [{"role": "system", "content": sysmsg}] + history
     steps, text = [], ""
     try:
         if mode == "mock":
             text = f"（模拟模型）已收到：{history[-1]['content'][:60]}"
+            if not preset and re.search(r"怎么|建议|要不要|安排|如何", history[-1]["content"]):
+                text += ("\n\n建议先和供应链确认到货时间，再在详情页加一句到货提示。\n"
+                         '<todo>{"name": "确认到货并更新提示", "steps": [{"text": "确认白色款能否提前到货", "by": "供应链"}, '
+                         '{"text": "详情页首屏加到货时间提示", "by": "我"}], "track_metric": "cvr", "due_days": 2}</todo>')
         else:
             for _ in range(MAX_CALLS + 1):
                 msg = chat(msgs, tools=tools.TOOL_SPECS)
@@ -63,6 +69,9 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
                                  "content": json.dumps(result, ensure_ascii=False, default=str)[:6000]})
     except llm_client.LLMError as e:
         text = f"模型暂时不可用：{e}"
+    suggestion = None
+    if not preset:
+        text, suggestion = todos.split_suggestion(text, name)
     for i in range(0, len(text), 30):
         yield dict(type="delta", text=text[i:i + 30])
     allowed = set()
@@ -75,4 +84,4 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
     bad = sorted(set(verify.check_text(text, allowed))) if not preset else []
     if key and text and mode == "live":
         state.cache_put(key, dict(content=text))
-    yield dict(type="result", text=text, unmatched_numbers=bad)
+    yield dict(type="result", text=text, unmatched_numbers=bad, todo=suggestion)
