@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Card, Empty, Segmented, Table, Tag, Timeline } from "antd";
+import { Button, Card, Empty, Segmented, Table, Tag, Timeline } from "antd";
+import { ArrowDownOutlined } from "@ant-design/icons";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import AIPanel from "../components/AIPanel";
 import TrendChart, { Series } from "../components/TrendChart";
@@ -76,6 +77,8 @@ export default function ProductDetail() {
               {card && <><Sev s={card.severity} /><Tag bordered={false}>{card.rule_names.join(" · ")}</Tag></>}
             </div>
           </div>
+          <Button className="to-ai" type="primary" ghost icon={<ArrowDownOutlined />}
+            onClick={() => document.getElementById("ai-diag")?.scrollIntoView({ behavior: "smooth", block: "start" })}>AI 诊断</Button>
           <div className="hs">
             <div className="muted small">健康度</div>
             <div className="big" style={{ color: healthColor(h.level) }}>{h.score}</div>
@@ -83,19 +86,17 @@ export default function ProductDetail() {
           </div>
         </div>
       </Card>
-      <div className="grid g-main mt">
-        <div className="grid sticky-col">
-          <Card title={<>指标趋势<span className="hint">浅色底纹为近 7 日 · 虚线为事件</span></>}
-            extra={<Segmented size="small" value={metric} onChange={v => setMetric(String(v))} options={avail.map(m => ({ label: m[1], value: m[0] }))} />}>
-            {chart && <TrendChart dates={chart.dates} series={chart.series} kind={chart.kind} zeroBase={chart.zeroBase} events={chart.events} height={260} />}
-          </Card>
-          <div className="grid g2">
-            <Card title="规格" styles={{ body: { paddingTop: 8 } }}><Variants v={d.variants} /></Card>
-            <Card title="事件与动作" styles={{ body: { paddingTop: 8 } }}><Events d={d} /></Card>
-          </div>
+      <div className="grid g-main g-top mt">
+        <Card title={<>指标趋势<span className="hint">浅色底纹为近 7 日 · 虚线为事件</span></>}
+          extra={<Segmented size="small" value={metric} onChange={v => setMetric(String(v))} options={avail.map(m => ({ label: m[1], value: m[0] }))} />}>
+          {chart && <TrendChart dates={chart.dates} series={chart.series} kind={chart.kind} zeroBase={chart.zeroBase} events={chart.events} height={360} />}
+        </Card>
+        <div className="grid">
+          <Card title="规格" styles={{ body: { paddingTop: 8 } }}><Variants v={d.variants} /></Card>
+          <Card title="事件与动作" styles={{ body: { paddingTop: 8 } }}><Events d={d} /></Card>
         </div>
-        <div><AIPanel detail={d} card={card} autoRun={sp.get("diag") === "1" || !!d.diagnosis_cached} /></div>
       </div>
+      <div className="mt" id="ai-diag"><AIPanel detail={d} card={card} autoRun={sp.get("diag") === "1" || !!d.diagnosis_cached} /></div>
     </>
   );
 }

@@ -138,57 +138,64 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
       {err && <div className="verify bad" style={{ marginTop: 12 }}>诊断出错：{err}</div>}
       {r && (
         <>
-          <div className="sec-title" style={{ marginTop: 0 }}>结论</div>
-          <div className="summary">{r.summary}</div>
-          {r.notes?.length > 0 && <div className="small sec" style={{ marginTop: 6 }}>{r.notes.map((n: string, k: number) => <div key={k}>{n}</div>)}</div>}
-          {r.path?.length > 0 && <>
-            <div className="sec-title">分析路径 <span className="muted small" style={{ fontWeight: 400 }}>从 GMV 出发逐层拆解，定位到原因</span></div>
-            <AnalysisPath layers={r.path} />
-          </>}
-          {steps.length > 0 && <>
-            <a className="small steps-toggle" onClick={() => setShowSteps(x => !x)}>{showSteps ? <DownOutlined /> : <RightOutlined />} AI 实际执行的 {steps.length} 个分析步骤</a>
-            {showSteps && <StepList steps={steps} running={false} />}
-          </>}
-          {r.root_causes.length > 0 && <div className="sec-title">根因与证据</div>}
-          {r.root_causes.map((c: any, k: number) => (
-            <div className="cause" key={k}>
-              <div className="h">{c.cause_name}
-                <Tag bordered={false} color={c.confidence === "强" ? "success" : c.confidence === "中" ? "warning" : "default"}>把握：{c.confidence}</Tag></div>
-              <ul>{c.evidence.map((e: any, j: number) => <li key={j}>{e.text}</li>)}</ul>
-            </div>
-          ))}
-          {r.plans.length > 0 && <div className="sec-title">动作方案 <span className="muted small" style={{ fontWeight: 400 }}>来自动作库，参数按本商品数据计算，已检查经营约束</span></div>}
-          {r.plans.map((p: any, k: number) => (
-            <PlanCard key={p.action_id + k} p={p} i={k} act={acts[p.action_id]} onDecide={decide} onChanged={() => { loadActs(); refreshMeta(); }} onMaterial={(pr, pl, lb) => chat(null, pr, pl, lb)} />
-          ))}
-          <div className="sec-title">数据局限</div>
-          <ul className="lim">{r.limitations.map((x: string, k: number) => <li key={k}>{x}</li>)}</ul>
-          <div className={"verify " + (v.unmatched_numbers?.length ? "bad" : "ok")} style={{ marginTop: 12 }}>
-            {v.unmatched_numbers?.length ? `⚠ 以下数字未能在计算结果中核对到：${v.unmatched_numbers.join("、")}` : "✓ 结论中的数字已逐一核对，均来自平台计算结果"}
-            {v.dropped_plans?.length > 0 && <div>已拦截 {v.dropped_plans.length} 个不合规方案</div>}
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <Button size="small" icon={<ReloadOutlined />} onClick={() => run(true)}>重新诊断</Button>
-            <Button size="small" icon={<FileTextOutlined />} onClick={productReport}>生成单品诊断报告</Button>
-          </div>
-          <div className="chat">
-            <div className="sec-title" style={{ marginTop: 0 }}>追问</div>
-            <div className="msgs" ref={msgBox}>
-              {msgs.map((m, k) => (
-                <div key={k} className={"m " + (m.role === "user" ? "u" : "a")}>
-                  {m.role === "user" ? m.text : (
-                    <>
-                      {m.pending && <span className="muted"><Spin size="small" /> {m.pending}</span>}
-                      {m.text && <Markdown text={m.text} marks={m.unmatched} />}
-                      {m.unmatched && m.unmatched.length > 0 && <div className="small" style={{ color: "#7a5000", marginTop: 4 }}>⚠ 未核对到的数字：{m.unmatched.join("、")}</div>}
-                    </>
-                  )}
+          <div className="ai-cols">
+            <div className="ai-col">
+              <div className="sec-title" style={{ marginTop: 0 }}>结论</div>
+              <div className="summary">{r.summary}</div>
+              {r.notes?.length > 0 && <div className="small sec" style={{ marginTop: 6 }}>{r.notes.map((n: string, k: number) => <div key={k}>{n}</div>)}</div>}
+              {r.path?.length > 0 && <>
+                <div className="sec-title">分析路径 <span className="muted small" style={{ fontWeight: 400 }}>从 GMV 出发逐层拆解，定位到原因</span></div>
+                <AnalysisPath layers={r.path} />
+              </>}
+              {steps.length > 0 && <>
+                <a className="small steps-toggle" onClick={() => setShowSteps(x => !x)}>{showSteps ? <DownOutlined /> : <RightOutlined />} AI 实际执行的 {steps.length} 个分析步骤</a>
+                {showSteps && <StepList steps={steps} running={false} />}
+              </>}
+              {r.root_causes.length > 0 && <div className="sec-title">根因与证据</div>}
+              {r.root_causes.map((c: any, k: number) => (
+                <div className="cause" key={k}>
+                  <div className="h">{c.cause_name}
+                    <Tag bordered={false} color={c.confidence === "强" ? "success" : c.confidence === "中" ? "warning" : "default"}>把握：{c.confidence}</Tag></div>
+                  <ul>{c.evidence.map((e: any, j: number) => <li key={j}>{e.text}</li>)}</ul>
                 </div>
               ))}
+              <div className="sec-title">数据局限</div>
+              <ul className="lim">{r.limitations.map((x: string, k: number) => <li key={k}>{x}</li>)}</ul>
+              <div className={"verify " + (v.unmatched_numbers?.length ? "bad" : "ok")} style={{ marginTop: 12 }}>
+                {v.unmatched_numbers?.length ? `⚠ 以下数字未能在计算结果中核对到：${v.unmatched_numbers.join("、")}` : "✓ 结论中的数字已逐一核对，均来自平台计算结果"}
+                {v.dropped_plans?.length > 0 && <div>已拦截 {v.dropped_plans.length} 个不合规方案</div>}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <Button size="small" icon={<ReloadOutlined />} onClick={() => run(true)}>重新诊断</Button>
+                <Button size="small" icon={<FileTextOutlined />} onClick={productReport}>生成单品诊断报告</Button>
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <Input value={q} onChange={e => setQ(e.target.value)} onPressEnter={() => chat(q)} placeholder="例如：如果明天补上货，大概能恢复多少？" disabled={busy} />
-              <Button type="primary" icon={<SendOutlined />} onClick={() => chat(q)} loading={busy}>发送</Button>
+            <div className="ai-col">
+              {r.plans.length > 0 && <div className="sec-title" style={{ marginTop: 0 }}>动作方案 <span className="muted small" style={{ fontWeight: 400 }}>来自动作库，参数按本商品数据计算，已检查经营约束</span></div>}
+              {r.plans.map((p: any, k: number) => (
+                <PlanCard key={p.action_id + k} p={p} i={k} act={acts[p.action_id]} onDecide={decide} onChanged={() => { loadActs(); refreshMeta(); }} onMaterial={(pr, pl, lb) => chat(null, pr, pl, lb)} />
+              ))}
+              {r.plans.length === 0 && <div className="muted small">没有需要执行的方案。</div>}
+              <div className="chat">
+                <div className="sec-title" style={{ marginTop: 0 }}>追问</div>
+                <div className="msgs" ref={msgBox}>
+                  {msgs.map((m, k) => (
+                    <div key={k} className={"m " + (m.role === "user" ? "u" : "a")}>
+                      {m.role === "user" ? m.text : (
+                        <>
+                          {m.pending && <span className="muted"><Spin size="small" /> {m.pending}</span>}
+                          {m.text && <Markdown text={m.text} marks={m.unmatched} />}
+                          {m.unmatched && m.unmatched.length > 0 && <div className="small" style={{ color: "#7a5000", marginTop: 4 }}>⚠ 未核对到的数字：{m.unmatched.join("、")}</div>}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Input value={q} onChange={e => setQ(e.target.value)} onPressEnter={() => chat(q)} placeholder="例如：如果明天补上货，大概能恢复多少？" disabled={busy} />
+                  <Button type="primary" icon={<SendOutlined />} onClick={() => chat(q)} loading={busy}>发送</Button>
+                </div>
+              </div>
             </div>
           </div>
         </>
