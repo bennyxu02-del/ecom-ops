@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core import actions, alerts, health, loader, tiering  # noqa: E402
+from core import actions, alerts, health, loader, path, sop, tiering  # noqa: E402
 from core.decompose import decompose_gmv, lmdi  # noqa: E402
 
 DS = {n: loader.load(ROOT / "data" / "datasets" / n) for n in ("3c", "snacks")}
@@ -96,6 +96,34 @@ class TestAlerts(unittest.TestCase):
         t = tiering.compute(DS["3c"])
         self.assertTrue(t["P01"]["focus"])
         self.assertFalse(t["P20"]["focus"])
+
+
+class TestPath(unittest.TestCase):
+    """分析路径按拆解树逐层下钻：主因对、下钻方向对、正常波动不下钻。"""
+    def _path(self, name, pid):
+        ds = DS[name]
+        tiers = tiering.compute(ds)
+        card = next((c for c in alerts.scan(ds) if c["product_id"] == pid and c["is_today"]), None)
+        _, res = sop.run(ds, pid, card=card, tiers=tiers)
+        return {L["key"]: L for L in path.build(ds, pid, res, card, tiers)}
+
+    def test_stockout_drills_to_variant_and_factors(self):
+        p = self._path("3c", "P01")
+        main = [r["name"] for r in p["l1"]["rows"] if r["tag"] == "主因"]
+        self.assertEqual(main, ["支付转化率"])
+        self.assertIn("白色断货", p["variant"]["title"])
+        self.assertEqual([r["name"] for r in p["factors"]["rows"] if r["tag"] == "异常"], ["库存"])
+
+    def test_traffic_drills_to_channel(self):
+        p = self._path("3c", "P03")
+        self.assertIn("uv", p)
+        self.assertNotIn("factors", p)
+        self.assertIn("付费投放", p["uv"]["title"])
+
+    def test_normal_range_stops(self):
+        p = self._path("3c", "P04")
+        self.assertEqual(set(p), {"gmv", "l1"})
+        self.assertIn("正常波动", p["l1"]["verdict"])
 
 
 if __name__ == "__main__":

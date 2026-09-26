@@ -7,7 +7,7 @@ import json
 import re
 import time
 
-from core import actions, config, sop, tools
+from core import actions, config, path, sop, tools
 from core.actions import completeness
 
 from .. import data, llm_client, state
@@ -111,11 +111,17 @@ def _step_event(s):
 
 
 def run(name: str, pid: str, refresh: bool = False):
-    """生成器：逐个产出 SSE 事件 dict；结果中的方案统一补齐步骤负责人与协同事项。"""
+    """生成器：逐个产出 SSE 事件 dict；结果中的方案统一补齐步骤负责人与协同事项，并附上分析路径。"""
     for ev in _run(name, pid, refresh):
         if ev.get("type") == "result":
-            for p in ev["result"].get("plans") or []:
+            res = ev["result"]
+            for p in res.get("plans") or []:
                 actions.annotate(p)
+            try:     # 按拆解树整理的分析路径（缓存结果也补上）
+                res["path"] = path.build(data.ds_of(name), pid, res, data.card_for(name, pid, today_only=True), data.tiers(name))
+            except Exception as e:  # noqa: BLE001
+                print("[diagnose] 分析路径生成失败：", repr(e), flush=True)
+                res["path"] = []
         yield ev
 
 

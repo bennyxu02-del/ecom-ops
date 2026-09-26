@@ -27,6 +27,7 @@ export default function Methods() {
           <li>客单价 → 件单价 × 人均件数；影响因素：促销、优惠券、规格结构</li>
         </ul>
         <p className="sec">影响因素的检查顺序由品类配置决定：当前为 {p.factor_priority.join(" → ")}</p>
+        <p className="sec">AI 诊断按这棵树逐层下钻：先算出三个因子各自的贡献，找到主因，再对主因往下拆，直到定位原因。商品诊断里的「分析路径」就是沿这棵树走出来的。</p>
       </div>) },
     { key: "tiering", label: "商品分层", children: (
       <>

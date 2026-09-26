@@ -1,15 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Card, Input, Spin, Tag } from "antd";
-import { CheckOutlined, FileTextOutlined, ReloadOutlined, SendOutlined } from "@ant-design/icons";
+import { CheckOutlined, DownOutlined, FileTextOutlined, ReloadOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { api, sse } from "../api";
 import { useApp } from "../App";
+import AnalysisPath from "./AnalysisPath";
 import Markdown from "./Markdown";
 import PlanCard from "./PlanCard";
 import ReasonModal, { ReasonSpec } from "./ReasonModal";
 
 type Step = { text: string; done: boolean };
 type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[] };
+
+function StepList({ steps, running }: { steps: Step[]; running: boolean }) {
+  return (
+    <ul className="steps">
+      {steps.length === 0 && running && <li className="run"><span className="ic"><Spin size="small" /></span>正在读取数据…</li>}
+      {steps.map((s, k) => (
+        <li key={k} className={s.done ? "" : "run"}><span className="ic">{s.done ? <CheckOutlined /> : <Spin size="small" />}</span><span>{s.text}</span></li>
+      ))}
+    </ul>
+  );
+}
 
 const Title = () => <div className="ai-title"><span className="spark">AI</span>AI 商品诊断</div>;
 
@@ -24,6 +36,7 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showSteps, setShowSteps] = useState(false);
   const [modal, setModal] = useState<{ spec: ReasonSpec; resolve: (v: { option: string; text: string } | null) => void } | null>(null);
   const history = useRef<{ role: string; content: string }[]>([]);
   const abort = useRef<AbortController | null>(null);
@@ -41,7 +54,7 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
     abort.current?.abort();
     const ac = new AbortController();
     abort.current = ac;
-    setPhase("running"); setSteps([]); setResult(null); setErr(null);
+    setPhase("running"); setSteps([]); setResult(null); setErr(null); setShowSteps(false);
     try {
       await sse(`/api/diagnose/${pid}${refresh ? "?refresh=true" : ""}`, {}, ev => {
         if (ev.type === "step") setSteps(s => [...s.map(x => ({ ...x, done: true })), { text: ev.summary, done: false }]);
@@ -118,19 +131,24 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
 
   return (
     <Card className="ai-panel" title={<Title />}>
-      <div className="sec-title" style={{ marginTop: 0 }}>分析过程</div>
-      <ul className="steps">
-        {steps.length === 0 && phase === "running" && <li className="run"><span className="ic"><Spin size="small" /></span>正在读取数据…</li>}
-        {steps.map((s, k) => (
-          <li key={k} className={s.done ? "" : "run"}><span className="ic">{s.done ? <CheckOutlined /> : <Spin size="small" />}</span><span>{s.text}</span></li>
-        ))}
-      </ul>
+      {!r && <>
+        <div className="sec-title" style={{ marginTop: 0 }}>分析过程</div>
+        <StepList steps={steps} running={phase === "running"} />
+      </>}
       {err && <div className="verify bad" style={{ marginTop: 12 }}>诊断出错：{err}</div>}
       {r && (
         <>
-          <div className="sec-title">结论</div>
+          <div className="sec-title" style={{ marginTop: 0 }}>结论</div>
           <div className="summary">{r.summary}</div>
           {r.notes?.length > 0 && <div className="small sec" style={{ marginTop: 6 }}>{r.notes.map((n: string, k: number) => <div key={k}>{n}</div>)}</div>}
+          {r.path?.length > 0 && <>
+            <div className="sec-title">分析路径 <span className="muted small" style={{ fontWeight: 400 }}>从 GMV 出发逐层拆解，定位到原因</span></div>
+            <AnalysisPath layers={r.path} />
+          </>}
+          {steps.length > 0 && <>
+            <a className="small steps-toggle" onClick={() => setShowSteps(x => !x)}>{showSteps ? <DownOutlined /> : <RightOutlined />} AI 实际执行的 {steps.length} 个分析步骤</a>
+            {showSteps && <StepList steps={steps} running={false} />}
+          </>}
           {r.root_causes.length > 0 && <div className="sec-title">根因与证据</div>}
           {r.root_causes.map((c: any, k: number) => (
             <div className="cause" key={k}>

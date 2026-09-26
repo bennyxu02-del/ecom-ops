@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { Card, Empty, Segmented, Table, Tag, Timeline } from "antd";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import AIPanel from "../components/AIPanel";
-import DecomposeTree from "../components/DecomposeTree";
 import TrendChart, { Series } from "../components/TrendChart";
 import { EV_SHORT, Sev, healthColor } from "../format";
 import { Loading, useLoad } from "../hooks";
@@ -59,7 +58,6 @@ export default function ProductDetail() {
   if (!d) return <Loading error={error} />;
   const h = d.health;
   const card = d.card && d.card.is_today ? d.card : null;
-  const dec = d.decompose;
   const avail = METRICS.filter(m => m[0] === "gmv" || d.series[m[0]]);
 
   return (
@@ -86,13 +84,10 @@ export default function ProductDetail() {
         </div>
       </Card>
       <div className="grid g-main mt">
-        <div className="grid">
+        <div className="grid sticky-col">
           <Card title={<>指标趋势<span className="hint">浅色底纹为近 7 日 · 虚线为事件</span></>}
             extra={<Segmented size="small" value={metric} onChange={v => setMetric(String(v))} options={avail.map(m => ({ label: m[1], value: m[0] }))} />}>
             {chart && <TrendChart dates={chart.dates} series={chart.series} kind={chart.kind} zeroBase={chart.zeroBase} events={chart.events} height={260} />}
-          </Card>
-          <Card styles={{ body: { padding: "12px 12px 16px" } }} title={<>指标拆解树<span className="hint">GMV = 访客数 × 支付转化率 × 客单价 · {dec.cur_window} 对比 {dec.prev_window}</span></>}>
-            <DecomposeTree d={d} />
           </Card>
           <div className="grid g2">
             <Card title="规格" styles={{ body: { paddingTop: 8 } }}><Variants v={d.variants} /></Card>
