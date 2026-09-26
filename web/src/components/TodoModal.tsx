@@ -4,6 +4,7 @@ import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import { api } from "../api";
 import { useApp } from "../App";
+import NotifyConfirm, { NotifyItem } from "./NotifyConfirm";
 
 export const ROLES = ["我", "供应链", "投放运营", "商品主管"];
 export const TRACK_METRICS: [string, string][] = [
@@ -21,6 +22,15 @@ type Props = {
   onClose: () => void;
   onCreated: (a: any) => void;
 };
+
+/** 保存后的提示：通知了谁、哪些还要手动发送 */
+export function notifiedText(res: any[] | undefined, total: number, notify: boolean) {
+  const ok = (res || []).filter(r => r.ok).map(r => `${r.to}（${r.role}）`);
+  const left = total - ok.length;
+  if (!total) return "已保存待办";
+  if (!notify) return `已保存待办，${total} 项协同稍后在待办中心发送`;
+  return "已保存" + (ok.length ? `，已通过飞书通知 ${ok.join("、")}` : "") + (left ? `；另有 ${left} 项未推送，请在待办中心发送` : "");
+}
 
 /** 新建待办：名称、步骤与负责人、截止日期、跟踪指标、备注 */
 export default function TodoModal({ open, source, productId, draft, context, onClose, onCreated }: Props) {
@@ -44,18 +54,29 @@ export default function TodoModal({ open, source, productId, draft, context, onC
     if (!productId && !products.length) api<any[]>("/api/products").then(setProducts).catch(() => {});
   }, [open]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = async () => {
+  const [confirm, setConfirm] = useState<{ body: any; items: NotifyItem[] } | null>(null);
+
+  const collect = async () => {
     const v = await form.validateFields();
+    return {
+      product_id: productId || v.product_id, name: v.name, steps: v.steps.filter((s: any) => s?.text?.trim()),
+      due_date: v.due ? v.due.format("YYYY-MM-DD") : null, track_metric: v.track_metric, note: v.note, source, context,
+    };
+  };
+  const create = async (body: any, notify: boolean) => {
+    const a = await api("/api/todos", { method: "POST", body: { ...body, notify } });
+    message.success(notifiedText(a.notified, (a.handoffs || []).length, notify));
+    refreshMeta();
+    setConfirm(null);
+    onCreated(a);
+  };
+  const save = async () => {
+    const body = await collect();
     setBusy(true);
     try {
-      const a = await api("/api/todos", { method: "POST", body: {
-        product_id: productId || v.product_id, name: v.name, steps: v.steps.filter((s: any) => s?.text?.trim()),
-        due_date: v.due ? v.due.format("YYYY-MM-DD") : null, track_metric: v.track_metric, note: v.note, source, context,
-      } });
-      const help = (a.handoffs || []).length;
-      message.success(help ? `已加入待办，另有 ${help} 项协同请在「协同中心」发送` : "已加入待办");
-      refreshMeta();
-      onCreated(a);
+      const items = await api<NotifyItem[]>("/api/todos/preview", { method: "POST", body });
+      if (items.length) setConfirm({ body, items });
+      else await create(body, false);
     } catch (e: any) { message.error(e.message); } finally { setBusy(false); }
   };
 
@@ -86,7 +107,7 @@ export default function TodoModal({ open, source, productId, draft, context, onC
                 ))}
                 <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ text: "", by: "我" })} disabled={fields.length >= 8}>添加步骤</Button>
                 <Form.ErrorList errors={errors} />
-                <div className="muted small" style={{ marginTop: 6 }}>负责人不是「我」的步骤，会自动生成转交单，在协同中心发送给对应同事。</div>
+                <div className="muted small" style={{ marginTop: 6 }}>负责人不是「我」的步骤会生成协同请求，保存时可以直接推送到对方飞书。</div>
               </div>
             )}
           </Form.List>
@@ -99,6 +120,8 @@ export default function TodoModal({ open, source, productId, draft, context, onC
         </Space>
         <Form.Item name="note" label="备注" style={{ marginBottom: 0 }}><Input.TextArea rows={2} placeholder="为什么要做，可选" maxLength={300} /></Form.Item>
       </Form>
+      <NotifyConfirm items={confirm?.items || null} onCancel={() => setConfirm(null)}
+        onConfirm={async n => { try { await create(confirm!.body, n); } catch (e: any) { message.error(e.message); } }} />
     </Modal>
   );
 }

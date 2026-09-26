@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import threading
 
 from core import actions as core_actions
 from core.weekly import METRIC_NAMES
@@ -116,8 +117,23 @@ def update(name: str, aid: int, *, title=None, due_date=None, note=None, status=
         state.update_action(aid, **changes)
         for t in logs:
             collab.add_log(aid, t)
+        # 协同事项与飞书同步（飞书调用放到后台，不拖慢页面）
+        events = []
+        if "due_date" in changes and changes["due_date"]:
+            collab.set_due(aid, changes["due_date"])
+            events.append(("due", changes["due_date"]))
+        if "name" in changes:
+            events.append(("rename", ""))
+        if changes.get("status") == "cancelled":
+            collab.cancel_all(aid, reason)
+            events.append(("cancel", reason or ""))
         if changes.get("status") == "adopted":
+            collab.reopen_all(aid)
             collab._refresh_action(name, aid)
+            events.append(("reopen", ""))
+        if events:
+            from . import notify
+            threading.Thread(target=lambda: [notify.changed(aid, w, d) for w, d in events], daemon=True).start()
     return state.get_action(aid)
 
 

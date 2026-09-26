@@ -15,6 +15,7 @@ export default function Integrations() {
   const { data: s, error, setData } = useLoad<any>("/api/integrations/feishu");
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [probe, setProbe] = useState<{ at: number; to?: string } | null>(null);
   const [form] = Form.useForm();
   const { message } = App.useApp();
   if (!s) return <Loading error={error} />;
@@ -32,19 +33,38 @@ export default function Integrations() {
     try { await api("/api/integrations/feishu/test", { method: "POST", body: { role } }); message.success("测试消息已发送，请在飞书中查看"); }
     catch (e: any) { message.error(e.message); }
   };
+  const testCard = async () => {
+    try {
+      const r = await api<any>("/api/integrations/feishu/test-card", { method: "POST" });
+      setProbe({ at: r.sent_at, to: r.to });
+      message.success(`测试卡片已发给${r.to || "你"}，请在飞书里点「测试回调」`);
+      for (let i = 0; i < 40; i++) {           // 最多等 2 分钟
+        await new Promise(res => setTimeout(res, 3000));
+        const x = await api<any>("/api/integrations/feishu");
+        setData(x);
+        if ((x.last_callback || 0) > r.sent_at) { message.success("按钮回调正常"); break; }
+      }
+    } catch (e: any) { message.error(e.message); }
+  };
   const clear = async (role: string) => setData(await api(`/api/integrations/feishu/roles/${encodeURIComponent(role)}`, { method: "DELETE" }));
 
   const conn = !s.enabled ? <Tag>未配置</Tag> : s.ready ? <Tag color="success">已连接</Tag> : <Tag color="error">连接失败</Tag>;
   const cb = !s.enabled ? <Tag>—</Tag> : s.callback_online ? <Tag color="success">在线</Tag> : <Tag color="warning">离线</Tag>;
 
+  const lastCb = s.last_callback ? new Date(s.last_callback * 1000) : null;
+  const tested = probe && (s.last_callback || 0) > probe.at;
+  const cbTest = !s.enabled ? null : tested ? <Tag color="success">测试通过 · {lastCb!.toLocaleTimeString("zh-CN", { hour12: false })}</Tag>
+    : probe ? <Tag color="processing">等待你在飞书点击…</Tag>
+    : lastCb ? <span className="muted small">最近一次回调 {lastCb.toLocaleString("zh-CN", { hour12: false })}</span> : null;
+
   return (
     <>
       <div className="page-head"><div><h1>集成</h1><div className="sub">把协同请求、审批和进展通知直接发到同事的飞书</div></div></div>
-      <Card title="飞书">
+      <Card title="飞书" extra={s.ready && <Button size="small" onClick={testCard}>发送测试卡片</Button>}>
         <Descriptions size="small" column={{ xs: 1, md: 3 }} items={[
           { key: "c", label: "连接状态", children: conn },
           { key: "a", label: "应用", children: s.app_id || "—" },
-          { key: "b", label: "卡片按钮回调", children: cb },
+          { key: "b", label: "卡片按钮回调", children: <Space size={6}>{cb}{cbTest}</Space> },
         ]} />
         {s.error && <div className="verify bad" style={{ marginTop: 8 }}>{s.error}</div>}
         {!s.enabled && <div className="verify bad" style={{ marginTop: 8 }}>尚未配置飞书应用凭证。</div>}

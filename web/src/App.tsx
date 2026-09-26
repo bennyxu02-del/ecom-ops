@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Badge, Menu, Select, Spin, Tooltip } from "antd";
-import { AlertOutlined, AppstoreOutlined, CheckSquareOutlined, DashboardOutlined, FileTextOutlined, ReadOutlined, TeamOutlined, ApiOutlined } from "@ant-design/icons";
+import { AlertOutlined, AppstoreOutlined, CheckSquareOutlined, DashboardOutlined, FileTextOutlined, ReadOutlined, ApiOutlined } from "@ant-design/icons";
 import { api, getDs, setDs } from "./api";
 import Overview from "./pages/Overview";
 import Products from "./pages/Products";
@@ -11,7 +11,6 @@ import Actions from "./pages/Actions";
 import Reports from "./pages/Reports";
 import ReportView from "./pages/ReportView";
 import Methods from "./pages/Methods";
-import Collab from "./pages/Collab";
 import Integrations from "./pages/Integrations";
 import HandoffView from "./pages/HandoffView";
 
@@ -24,8 +23,7 @@ const NAV = [
   { key: "overview", label: "经营总览", icon: <DashboardOutlined /> },
   { key: "products", label: "商品", icon: <AppstoreOutlined /> },
   { key: "alerts", label: "预警中心", icon: <AlertOutlined /> },
-  { key: "actions", label: "行动跟踪", icon: <CheckSquareOutlined /> },
-  { key: "collab", label: "协同中心", icon: <TeamOutlined /> },
+  { key: "actions", label: "待办中心", icon: <CheckSquareOutlined /> },
   { key: "reports", label: "报告中心", icon: <FileTextOutlined /> },
   { key: "methods", label: "方法库", icon: <ReadOutlined /> },
   { key: "integrations", label: "集成", icon: <ApiOutlined /> },
@@ -85,9 +83,9 @@ function Shell() {
         <Menu mode="inline" selectedKeys={[active]} onClick={e => nav("/" + e.key)}
           items={NAV.map(n => ({
             key: n.key, icon: n.icon,
-            label: (n.key === "alerts" && alertCount) || (n.key === "collab" && collabCount)
+            label: (n.key === "alerts" && alertCount) || (n.key === "actions" && collabCount)
               ? <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>{n.label}
-                  <Badge count={n.key === "alerts" ? alertCount : collabCount} size="small" color={n.key === "collab" ? "#fab219" : undefined} /></span>
+                  <Badge count={n.key === "alerts" ? alertCount : collabCount} size="small" color={n.key === "actions" ? "#fab219" : undefined} /></span>
               : n.label,
           }))} />
       </nav>
@@ -103,7 +101,7 @@ function Shell() {
             <Route path="/reports" element={<Reports />} />
             <Route path="/report/:rid" element={<ReportView />} />
             <Route path="/methods" element={<Methods />} />
-            <Route path="/collab" element={<Collab />} />
+            <Route path="/collab" element={<Navigate to="/actions?view=waiting" replace />} />
             <Route path="/integrations" element={<Integrations />} />
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Routes>

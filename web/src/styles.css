@@ -233,3 +233,12 @@ textarea.editor { width: 100%; min-height: 560px; font: 13px/1.7 ui-monospace, S
 .todo-sug ol li { margin: 2px 0; }
 .chat .m .m-ops { margin-top: 6px; display: flex; gap: 10px; align-items: center; font-size: 12.5px; }
 @media (max-width: 640px) { .todo-steps .ts { grid-template-columns: 14px minmax(0, 1fr) 92px 28px; gap: 6px; } }
+
+/* 保存前确认通知 / 待办中心视图 */
+.notify-list { display: grid; gap: 8px; }
+.notify-list .ni { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; }
+.notify-list .nh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.notify-list .ant-collapse-header { padding: 4px 0 0 !important; }
+.nmsg { white-space: pre-wrap; word-break: break-all; font-family: inherit; font-size: 12.5px; color: var(--text-2); background: var(--surface-2); border-radius: 6px; padding: 8px 10px; margin: 0; max-height: 240px; overflow: auto; }
+.view-tabs { margin-bottom: 12px; }
+.collab-row + .collab-row { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 2px; }

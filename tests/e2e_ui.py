@@ -55,8 +55,18 @@ async def main():
         await pg.wait_for_timeout(400)
         await shot("03_product_diag")
 
+        async def confirm_if_asked():
+            """采纳带协同的方案时会先弹出通知确认（未配置飞书时只能「仅保存」）"""
+            try:
+                await pg.wait_for_selector(".notify-list", timeout=3000)
+            except Exception:
+                return
+            await shot("03b_notify_confirm")
+            await pg.get_by_role("button", name="仅保存，稍后发送").click()
+
         print("4 采纳 → 标记已执行 → 驳回", flush=True)
         await pg.locator(".plan .pf button", has_text="采纳").first.click()
+        await confirm_if_asked()
         await pg.wait_for_selector(".plan .pf button:has-text('标记已执行')")
         await pg.locator(".plan .pf button", has_text="标记已执行").first.click()
         await pg.wait_for_timeout(800)
@@ -81,7 +91,7 @@ async def main():
         await pg.get_by_role("button", name="确认忽略").click()
         await pg.wait_for_timeout(800)
 
-        print("7 行动跟踪", flush=True)
+        print("7 待办中心", flush=True)
         await pg.goto(B + "/#/actions")
         await pg.wait_for_selector(".ant-table")
         await pg.wait_for_timeout(500)
@@ -101,6 +111,7 @@ async def main():
         await pg.locator(".ant-select-dropdown:visible .ant-select-item", has_text="投放运营").click()
         await shot("06b_todo_new")
         await pg.get_by_role("button", name="保存待办").click()
+        await confirm_if_asked()
         await pg.wait_for_selector(".ant-drawer-content")
         await pg.locator(".ant-drawer textarea").fill("素材由品牌部提供")
         await pg.get_by_role("button", name="保存备注").click()
@@ -130,6 +141,7 @@ async def main():
 
         print("9b 协同：采纳带转交的方案 → 发送转交单 → 协同方处理 → 回到平台", flush=True)
         await pg.locator(".plan", has_text="差评处理").locator(".pf button", has_text="采纳").first.click()
+        await confirm_if_asked()
         await pg.wait_for_selector(".plan .collab button:has-text('发送转交单')")
         await pg.locator(".plan .collab button", has_text="发送转交单").first.click()
         await pg.wait_for_selector(".ant-modal textarea")
@@ -147,11 +159,15 @@ async def main():
         await pg.get_by_role("button", name="已完成").click()
         await pg.wait_for_selector(".verify.ok")
         await shot("08c_handoff_view")
-        await pg.goto(B + "/#/collab")
-        await pg.get_by_text("全部").last.click()
+        await pg.goto(B + "/#/collab")                      # 旧链接跳到待办中心「等别人的」
+        await pg.wait_for_selector(".view-tabs")
+        await pg.get_by_role("button", name="全部", exact=True).click()
         await pg.wait_for_timeout(600)
-        await shot("08d_collab")
-        await pg.goto(B + "/#/actions")
+        await shot("08d_waiting")
+        await pg.locator(".view-tabs .ant-segmented-item", has_text="我要做的").click()
+        await pg.wait_for_timeout(500)
+        await shot("08d2_mine")
+        await pg.goto(B + "/#/actions?view=all")
         await pg.wait_for_selector(".ant-table")
         await pg.wait_for_timeout(500)
         await shot("08e_actions_snacks")

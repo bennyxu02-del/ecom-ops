@@ -57,6 +57,10 @@ def _role_of(open_id: str) -> str | None:
 def on_card(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
     try:
         v = data.event.action.value or {}
+        state.set_setting("feishu_last_callback", time.time())
+        if v.get("test"):
+            return P2CardActionTriggerResponse({"toast": {"type": "success", "content": "回调正常"},
+                                                "card": {"type": "raw", "data": feishu.build_test_done_card()}})
         hid, st = int(v["hid"]), v["status"]
         h0 = state.get_handoff(hid)
         by = _role_of(data.event.operator.open_id) or (h0 or {}).get("role")

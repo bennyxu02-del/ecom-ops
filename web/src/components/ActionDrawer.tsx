@@ -5,7 +5,8 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useApp } from "../App";
 import { Delta, num } from "../format";
-import HandoffSendModal, { HandoffTag } from "./HandoffSendModal";
+import { HandoffTag } from "./HandoffSendModal";
+import { HandoffOps, ago } from "./TodoViews";
 
 const SOURCE_COLOR: Record<string, string> = { diagnosis: "blue", chat: "purple", manual: "default" };
 export const SourceTag = ({ a }: { a: any }) => <Tag bordered={false} color={SOURCE_COLOR[a.source] || "default"}>{a.source_name}</Tag>;
@@ -23,7 +24,6 @@ export default function ActionDrawer({ action, onClose, onChanged }: { action: a
   const [a, setA] = useState<any>(action);
   const [note, setNote] = useState("");
   const [cancelReason, setCancelReason] = useState("");
-  const [sending, setSending] = useState<any>(null);
   const { asOf, refreshMeta } = useApp();
   const { message } = App.useApp();
 
@@ -108,11 +108,14 @@ export default function ActionDrawer({ action, onClose, onChanged }: { action: a
         <div className="sec-title">协同</div>
         <div style={{ display: "grid", gap: 6 }}>
           {a.handoffs.map((h: any) => (
-            <div key={h.id} className="collab-row" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-              <span>{h.kind_name} · {h.role}</span><HandoffTag h={h} />
-              <span className="muted small">截止 {h.due}</span>
-              <span style={{ flex: 1 }} />
-              {h.status === "draft" && open && <Button size="small" type="primary" ghost onClick={() => setSending(h)}>{h.kind === "approval" ? "提交审批" : "发送转交单"}</Button>}
+            <div key={h.id} className="collab-row">
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, flexWrap: "wrap" }}>
+                <span>{h.kind_name} · {h.role}{h.assignee ? `（${h.assignee}）` : ""}</span><HandoffTag h={h} />
+                <span className="muted small">截止 {h.due}{h.sent_at ? ` · ${h.channel === "feishu" ? "飞书" : "复制"}发出于 ${ago(h.sent_at)}` : ""}</span>
+                <span style={{ flex: 1 }} />
+                {h.status !== "question" && <HandoffOps h={{ ...h, action: a }} onDone={reload} compact />}
+              </div>
+              {h.status === "question" && <HandoffOps h={{ ...h, action: a }} onDone={reload} />}
             </div>
           ))}
         </div>
@@ -135,7 +138,6 @@ export default function ActionDrawer({ action, onClose, onChanged }: { action: a
         }))} />
       ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无记录" />}
 
-      <HandoffSendModal handoff={sending} onClose={() => setSending(null)} onSent={() => { setSending(null); reload(); }} />
     </Drawer>
   );
 }

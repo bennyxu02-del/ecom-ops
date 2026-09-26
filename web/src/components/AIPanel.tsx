@@ -8,7 +8,8 @@ import AnalysisPath from "./AnalysisPath";
 import Markdown from "./Markdown";
 import PlanCard from "./PlanCard";
 import ReasonModal, { ReasonSpec } from "./ReasonModal";
-import TodoModal, { TodoDraft } from "./TodoModal";
+import TodoModal, { TodoDraft, notifiedText } from "./TodoModal";
+import NotifyConfirm, { NotifyItem } from "./NotifyConfirm";
 
 type Step = { text: string; done: boolean };
 type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[]; preset?: boolean; done?: boolean; noai?: boolean; todo?: TodoDraft | null; created?: any; drafting?: boolean; q?: string };
@@ -38,6 +39,7 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [showSteps, setShowSteps] = useState(false);
+  const [adopt, setAdopt] = useState<{ body: any; items: NotifyItem[] } | null>(null);
   const [todoFor, setTodoFor] = useState<{ idx: number; draft: TodoDraft; context: any } | null>(null);
   const [modal, setModal] = useState<{ spec: ReasonSpec; resolve: (v: { option: string; text: string } | null) => void } | null>(null);
   const history = useRef<{ role: string; content: string }[]>([]);
@@ -88,9 +90,18 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
       const causes = (result?.root_causes || []).filter((c: any) => c.cause === plan.cause || c.cause_name === plan.cause_name);
       body.context = { summary: result?.summary, evidence: (causes.length ? causes : result?.root_causes || []).flatMap((c: any) => c.evidence.map((e: any) => e.text)) };
     }
-    await api("/api/actions", { method: "POST", body });
-    const needHelp = (plan.handoffs || []).length > 0;
-    message.success(decision === "reject" ? "已驳回" : needHelp ? "已采纳：你的步骤已列为待办，需要协同的部分请点「发送」" : "已采纳：完成全部步骤后自动开始跟踪效果");
+    if (decision === "adopt") {
+      const items = await api<NotifyItem[]>("/api/actions/preview", { method: "POST", body: { plan, product_id: pid, context: body.context } });
+      if (items.length) { setAdopt({ body, items }); return; }
+    }
+    await submit(body, false);
+  };
+
+  const submit = async (body: any, notify: boolean) => {
+    const r = await api<any>("/api/actions", { method: "POST", body: { ...body, notify } });
+    const total = (body.plan.handoffs || []).length;
+    message.success(body.decision === "reject" ? "已驳回" : notifiedText(r.notified, total, notify).replace("已保存待办", "已采纳").replace("已保存", "已采纳"));
+    setAdopt(null);
     loadActs(); refreshMeta();
   };
 
@@ -229,6 +240,8 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
       <TodoModal open={!!todoFor} source="chat" productId={pid} draft={todoFor?.draft} context={todoFor?.context}
         onClose={() => setTodoFor(null)}
         onCreated={a => { if (todoFor) setMsg(todoFor.idx, x => ({ ...x, created: a })); setTodoFor(null); loadActs(); }} />
+      <NotifyConfirm items={adopt?.items || null} onCancel={() => setAdopt(null)}
+        onConfirm={async n => { try { await submit(adopt!.body, n); } catch (e: any) { message.error(e.message); } }} />
       <ReasonModal spec={modal?.spec || null}
         onOk={(option, text) => { modal?.resolve({ option, text }); setModal(null); }}
         onCancel={() => { modal?.resolve(null); setModal(null); }} />

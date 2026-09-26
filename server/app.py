@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 from core import actions as core_actions  # noqa: E402
 from core import sop, weekly  # noqa: E402
 
-from . import collab, data, feishu, llm_client, state, todos  # noqa: E402
+from . import collab, data, feishu, llm_client, notify, state, todos  # noqa: E402
 from .agent import chat as chat_agent  # noqa: E402
 from .agent import diagnose, report  # noqa: E402
 from .product_report import render_product_report  # noqa: E402
@@ -113,6 +113,7 @@ class ActionCreate(BaseModel):
     reason: Optional[str] = None
     role: Optional[str] = None
     context: Optional[dict] = Field(None, description="诊断结论与证据，用于生成转交单：{summary, evidence: [..]}")
+    notify: bool = Field(False, description="保存后立即把协同事项推送到对方飞书")
 
 
 class StepUpdate(BaseModel):
@@ -128,6 +129,16 @@ class HandoffPut(BaseModel):
 class HandoffSend(BaseModel):
     channel: Literal["copy", "feishu"] = "copy"
     message: Optional[str] = None
+
+
+class HandoffReply(BaseModel):
+    text: str
+
+
+class ActionPreview(BaseModel):
+    plan: dict
+    product_id: str
+    context: Optional[dict] = None
 
 
 class HandoffRespond(BaseModel):
@@ -168,6 +179,7 @@ class TodoCreate(BaseModel):
     note: Optional[str] = None
     source: Literal["chat", "manual"] = "manual"
     context: Optional[dict] = None
+    notify: bool = False
 
 
 class TodoDraft(BaseModel):
@@ -192,6 +204,8 @@ async def lifespan(_app):
         data.get(name)                      # 预加载与预警扫描
     if not state.list_actions("3c"):
         data.seed()
+    if os.environ.get("REMINDERS", "on") != "off":
+        notify.start_scheduler()
     yield
 
 
@@ -357,11 +371,21 @@ def api_action_create(body: ActionCreate, request: Request, ds: str = DS):
                            adopted_date=today if body.decision != "reject" else None, source="diagnosis",
                            due_date=todos.default_due(name) if body.decision != "reject" else None)
     collab.add_log(aid, "驳回 AI 诊断方案：" + (body.reason or "") if body.decision == "reject" else "采纳 AI 诊断方案")
+    notified = []
     if body.decision != "reject":
         collab.create_for_action(name, aid, plan, body.context or {}, _base_url(request))
+        if body.notify:
+            notified = notify.send_all(aid)
     if body.card_id and body.decision != "reject":
         state.set_card(name, body.card_id, "done")
-    return dict(ok=True, id=aid)
+    return dict(ok=True, id=aid, notified=notified)
+
+
+@app.post("/api/actions/preview", tags=["行动跟踪"], summary="采纳前预览：哪些步骤要通知谁、消息内容")
+def api_action_preview(body: ActionPreview, ds: str = DS):
+    name = ds_name(ds)
+    plan = core_actions.annotate(dict(body.plan))
+    return notify.preview(collab.draft_handoffs(name, body.product_id, plan, body.context or {}))
 
 
 @app.patch("/api/actions/{aid}/steps", tags=["行动跟踪"], summary="勾选 / 取消勾选我的步骤")
@@ -407,26 +431,22 @@ def api_feishu_test(body: FeishuTest):
     return dict(ok=True)
 
 
-def _feishu_sync(hid: int, request: Request | None = None, notify: bool = True):
-    """协同状态变化后：刷新对方飞书里的卡片；把进展通知发起人。失败不影响主流程。"""
-    if not feishu.enabled():
-        return
-    h = collab.decorate_handoff(state.get_handoff(hid), with_context=True)
+@app.post("/api/integrations/feishu/test-card", tags=["集成"], summary="发一张带按钮的测试卡片，验证按钮回调")
+def api_feishu_test_card():
+    r = feishu.roles().get("我") or next(iter(feishu.roles().values()), None)
+    if not r:
+        raise HTTPException(400, "请先给「我」设置对应的飞书成员")
     try:
-        if h.get("ext_id"):
-            feishu.update_card(h["ext_id"], feishu.build_card(h, _link(hid, request)))
+        feishu.send_card(r["open_id"], feishu.build_test_card())
     except feishu.FeishuError as e:
-        print("[feishu] 更新卡片失败：", e, flush=True)
-    me = feishu.roles().get("我")
-    if notify and me and h["status"] != "sent":
-        last = (h.get("history") or [{}])[-1]
-        text = (f"【协同进展】{h['role']} {h['status_name']}：{(h.get('action') or {}).get('product_name', '')}"
-                f" · {(h.get('action') or {}).get('name', '')}" + (f"\n说明：{last.get('note')}" if last.get("note") else "")
-                + (f"\n查看：{_link(hid, request)}" if _link(hid, request) else ""))
-        try:
-            feishu.send_text(me["open_id"], text)
-        except feishu.FeishuError as e:
-            print("[feishu] 通知发起人失败：", e, flush=True)
+        raise HTTPException(400, str(e))
+    return dict(ok=True, sent_at=time.time(), to=r.get("name"))
+
+
+def _feishu_sync(hid: int, request: Request | None = None, notify_me: bool = True):
+    """协同状态变化后：刷新对方飞书里的卡片；把进展通知发起人。失败不影响主流程。"""
+    if feishu.enabled():
+        notify.sync(hid, notify_me)
 
 
 # ---------------- 协同 ----------------
@@ -458,24 +478,34 @@ def api_handoff_put(hid: int, body: HandoffPut):
 
 @app.post("/api/handoffs/{hid}/send", tags=["协同"])
 def api_handoff_send(hid: int, body: HandoffSend, request: Request):
-    h0 = _handoff_or_404(hid)
-    if body.channel == "feishu":
-        r = feishu.roles().get(h0["role"])
-        if not feishu.enabled() or not r:
-            raise HTTPException(400, f"飞书未配置，或还没有设置「{h0['role']}」对应的飞书成员")
-        if body.message:
-            state.update_handoff(hid, message=body.message)
-        h = collab.decorate_handoff(state.get_handoff(hid), with_context=True)
-        h["status"] = "sent"
-        try:
-            mid = feishu.send_card(r["open_id"], feishu.build_card(h, _link(hid, request)))
-        except feishu.FeishuError as e:
-            raise HTTPException(400, str(e))
-        state.update_handoff(hid, assignee=r.get("name"))
-        collab.mark_sent(hid, "feishu", body.message, ext_id=mid)
-        return collab.decorate_handoff(state.get_handoff(hid), with_context=True)
-    collab.mark_sent(hid, body.channel, body.message)
-    return collab.decorate_handoff(state.get_handoff(hid), with_context=True)
+    _handoff_or_404(hid)
+    _base_url(request)
+    try:
+        return notify.send(hid, body.channel, body.message)
+    except notify.NotifyError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/handoffs/{hid}/remind", tags=["协同"], summary="催一下：给对方飞书发提醒")
+def api_handoff_remind(hid: int, request: Request):
+    _handoff_or_404(hid)
+    _base_url(request)
+    try:
+        return notify.remind(hid)
+    except notify.NotifyError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/handoffs/{hid}/reply", tags=["协同"], summary="回复对方的疑问")
+def api_handoff_reply(hid: int, body: HandoffReply, request: Request):
+    h = _handoff_or_404(hid)
+    if h["status"] != "question":
+        raise HTTPException(400, "对方没有提出疑问")
+    _base_url(request)
+    try:
+        return notify.reply(hid, body.text)
+    except notify.NotifyError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/handoffs/{hid}/respond", tags=["协同"], summary="协同方处理：已接收 / 已完成 / 有疑问 / 批准 / 驳回")
@@ -512,7 +542,21 @@ def api_todo_create(body: TodoCreate, request: Request, ds: str = DS):
                            body.track_metric, body.note, body.source, body.context, _base_url(request))
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return _decorate_action(name, state.get_action(aid))
+    notified = notify.send_all(aid) if body.notify else []
+    return dict(_decorate_action(name, state.get_action(aid)), notified=notified)
+
+
+@app.post("/api/todos/preview", tags=["行动跟踪"], summary="保存前预览：哪些步骤要通知谁、消息内容")
+def api_todo_preview(body: TodoCreate, ds: str = DS):
+    name = ds_name(ds)
+    if body.product_id not in data.ds_of(name).product_ids():
+        raise HTTPException(400, "请选择商品")
+    plan = todos.build_plan(name, body.product_id, body.name or "待办", [s.model_dump() for s in body.steps],
+                            body.track_metric or "gmv", body.source)
+    ctx = dict(body.context or {})
+    if not ctx.get("summary") and body.note:
+        ctx["summary"] = body.note
+    return notify.preview(collab.draft_handoffs(name, body.product_id, plan, ctx, body.due_date or todos.default_due(name)))
 
 
 @app.post("/api/chat/{pid}/todo-draft", tags=["AI"], summary="把一条追问回复整理成待办草稿")

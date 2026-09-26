@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { App, Button, Card, Table, Tag } from "antd";
+import { App, Badge, Button, Card, Segmented, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined } from "@ant-design/icons";
 import { Link, useSearchParams } from "react-router-dom";
@@ -9,6 +9,7 @@ import { Delta, num } from "../format";
 import { HandoffTag } from "../components/HandoffSendModal";
 import ActionDrawer, { SourceTag, isOverdue, statusColor } from "../components/ActionDrawer";
 import TodoModal from "../components/TodoModal";
+import { MineView, WaitingView, flatHandoffs } from "../components/TodoViews";
 import { Loading, useLoad } from "../hooks";
 
 const uniq = (xs: any[]) => [...new Set(xs)].filter(Boolean).map(v => ({ text: v, value: v }));
@@ -20,8 +21,16 @@ export default function Actions() {
   const [sp, setSp] = useSearchParams();
   const [openId, setOpenId] = useState<number | null>(sp.get("open") ? Number(sp.get("open")) : null);
   const [creating, setCreating] = useState(false);
+  const [view, setView] = useState(sp.get("view") || "all");
 
-  useEffect(() => { if (sp.get("open")) { sp.delete("open"); setSp(sp, { replace: true }); } }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {      // 链接参数（?view= / ?open=）用过即清，页面内切换视图不受影响
+    const v = sp.get("view"), o = sp.get("open");
+    if (!v && !o) return;
+    if (v) setView(v);
+    if (o) setOpenId(Number(o));
+    if (data) reload();
+    sp.delete("view"); sp.delete("open"); setSp(sp, { replace: true });
+  }, [sp]);   // eslint-disable-line react-hooks/exhaustive-deps
   if (!data) return <Loading error={error} />;
 
   const exec = async (e: React.MouseEvent, id: number) => {
@@ -69,18 +78,34 @@ export default function Actions() {
         ? <Button size="small" onClick={e => exec(e, a.id)} style={{ borderColor: "#0ca30c", color: "#0ca30c" }}>标记已执行</Button> : null },
   ];
 
+  const live = (a: any) => ["adopted", "transferred"].includes(a.status);
+  const hs = flatHandoffs(data);
+  const nMine = data.filter(live).reduce((n, a) => n + (a.progress?.mine?.length || 0) - (a.progress?.mine_done?.length || 0), 0)
+    + hs.filter(h => ["question", "draft"].includes(h.status) && live(h.action)).length;
+  const nWait = hs.filter(h => ["sent", "received", "question"].includes(h.status) && live(h.action)).length;
+  const reloadAll = () => { reload(); refreshMeta(); };
+
   return (
     <>
       <div className="page-head">
-        <div><h1>行动跟踪</h1>
-          <div className="sub">AI 诊断方案、追问中产生的事项和手动新建的待办都在这里跟进；点击任意一行查看详情或编辑</div></div>
+        <div><h1>待办中心</h1>
+          <div className="sub">AI 诊断方案、追问中产生的事项和手动新建的待办都在这里；分给同事的步骤通过飞书协同</div></div>
         <div className="right"><Button type="primary" icon={<PlusOutlined />} onClick={() => setCreating(true)}>新建待办</Button></div>
       </div>
-      <Card styles={{ body: { padding: 0 } }}>
-        <Table rowKey="id" dataSource={data} columns={columns} pagination={false} scroll={{ x: 1290 }} locale={{ emptyText: "暂无待办" }}
-          rowClassName={() => "clickable"} onRow={a => ({ onClick: () => setOpenId(a.id) })} />
-      </Card>
-      <ActionDrawer action={open} onClose={() => setOpenId(null)} onChanged={a => a && upsert(a)} />
+      <Segmented className="view-tabs" value={view} onChange={v => setView(String(v))} options={[
+        { value: "mine", label: <span>我要做的 <Badge count={nMine} size="small" color="#2a78d6" /></span> },
+        { value: "waiting", label: <span>等别人的 <Badge count={nWait} size="small" color="#fab219" /></span> },
+        { value: "all", label: <span>全部待办 <span className="muted small">{data.length}</span></span> },
+      ]} />
+      {view === "mine" && <MineView actions={data} onOpen={setOpenId} reload={reloadAll} />}
+      {view === "waiting" && <WaitingView actions={data} onOpen={setOpenId} reload={reloadAll} />}
+      {view === "all" && (
+        <Card styles={{ body: { padding: 0 } }}>
+          <Table rowKey="id" dataSource={data} columns={columns} pagination={false} scroll={{ x: 1290 }} locale={{ emptyText: "暂无待办" }}
+            rowClassName={() => "clickable"} onRow={a => ({ onClick: () => setOpenId(a.id) })} />
+        </Card>
+      )}
+      <ActionDrawer action={open} onClose={() => setOpenId(null)} onChanged={a => { if (a) upsert(a); else reload(); }} />
       <TodoModal open={creating} source="manual" onClose={() => setCreating(false)}
         onCreated={a => { setCreating(false); upsert(a); setOpenId(a.id); }} />
     </>

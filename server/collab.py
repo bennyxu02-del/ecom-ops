@@ -19,9 +19,12 @@ from . import data, state
 SELF = core_actions.SELF
 
 HANDOFF_STATUS = {
-    "transfer": {"draft": "待发送", "sent": "已发送", "received": "已接收", "done": "已完成", "question": "有疑问"},
-    "approval": {"draft": "待发送", "sent": "待审批", "approved": "已批准", "declined": "已驳回", "question": "有疑问"},
+    "transfer": {"draft": "待发送", "sent": "已发送", "received": "已接收", "done": "已完成", "question": "有疑问",
+                 "cancelled": "已取消"},
+    "approval": {"draft": "待发送", "sent": "待审批", "approved": "已批准", "declined": "已驳回", "question": "有疑问",
+                 "cancelled": "已取消"},
 }
+CLOSED = ("done", "approved", "declined", "cancelled")
 ACTION_STATUS = {"adopted": "进行中", "executed": "已执行", "transferred": "已转交", "rejected": "已驳回",
                  "declined": "审批未通过", "cancelled": "已取消"}
 RESPONSES = {"transfer": {"received", "done", "question"}, "approval": {"approved", "declined", "question"}}
@@ -77,22 +80,35 @@ def compose(kind: str, role: str, plan: dict, step_idx: list[int], context: dict
 # ---------------------------------------------------------------------------
 # 采纳时创建协同事项
 # ---------------------------------------------------------------------------
-def create_for_action(name: str, action_row: int, plan: dict, context: dict, base_url: str | None,
-                      due: str | None = None):
+def draft_handoffs(name: str, pid: str, plan: dict, context: dict, due: str | None = None,
+                   base_url: str | None = None, hid_of=None) -> list[dict]:
+    """按方案拆出需要别人参与的事项，并生成转交单 / 审批申请的文字（保存前预览与保存共用）。"""
     ds = data.ds_of(name)
     core_actions.annotate(plan)
     as_of = ds.as_of.date() if hasattr(ds.as_of, "date") else ds.as_of
-    product_name = ds.product(plan_pid(plan, action_row))["product_name"]
-    roles = state.get_setting("feishu_roles", {}) or {}
+    product_name = ds.product(pid)["product_name"]
+    out = []
     for h in plan.get("handoffs") or []:
         h_due = due or (as_of if h["kind"] == "approval" else as_of + dt.timedelta(days=1)).strftime("%Y-%m-%d")
-        hid = state.add_handoff(ds=name, action_row=action_row, product_id=plan_pid(plan, action_row), kind=h["kind"],
+        out.append(dict(kind=h["kind"], role=h["role"], steps=h["steps"], due=h_due,
+                        message=compose(h["kind"], h["role"], plan, h["steps"], context, product_name, h_due, None)))
+    return out
+
+
+def create_for_action(name: str, action_row: int, plan: dict, context: dict, base_url: str | None,
+                      due: str | None = None):
+    pid = plan_pid(plan, action_row)
+    ds = data.ds_of(name)
+    product_name = ds.product(pid)["product_name"]
+    roles = state.get_setting("feishu_roles", {}) or {}
+    for h in draft_handoffs(name, pid, plan, context, due):
+        hid = state.add_handoff(ds=name, action_row=action_row, product_id=pid, kind=h["kind"],
                                 role=h["role"], assignee=(roles.get(h["role"]) or {}).get("name"),
-                                steps_json=json.dumps(h["steps"]), message="", status="draft", channel=None, due=h_due,
+                                steps_json=json.dumps(h["steps"]), message="", status="draft", channel=None, due=h["due"],
                                 history_json=json.dumps([dict(t=time.time(), status="draft", by="系统", note="创建待办时生成")],
                                                         ensure_ascii=False))
         link = f"{base_url.rstrip('/')}/#/h/{hid}" if base_url else None
-        msg = compose(h["kind"], h["role"], plan, h["steps"], context, product_name, h_due, link)
+        msg = compose(h["kind"], h["role"], plan, h["steps"], context, product_name, h["due"], link)
         state.update_handoff(hid, message=msg)
 
 
@@ -128,9 +144,39 @@ def respond(hid: int, status: str, note: str | None = None, by: str | None = Non
         raise ValueError("不支持的处理结果")
     if h["status"] == "draft":
         raise ValueError("该事项尚未发送")
-    _push_history(h, status, by=by or h["role"], **({"note": note} if note else {}))
+    if h["status"] == "cancelled":
+        raise ValueError("这条协同请求已取消，无需处理")
+    _push_history(h, status, by=by or h["role"], note=note)
+    if note:
+        state.update_handoff(hid, note=note)          # 最新反馈（卡片与待办中心展示）
     _refresh_action(h["ds"], h["action_row"])
     return state.get_handoff(hid)
+
+
+def cancel_all(action_row: int, reason: str | None = None):
+    """待办取消：未完成的协同事项一并关闭（记录原状态，重新打开时恢复）。"""
+    for h in state.list_handoffs(action_row=action_row):
+        if h["status"] not in CLOSED:
+            _push_history(h, "cancelled", by="我", note="待办已取消" + (f"：{reason}" if reason else ""))
+
+
+def reopen_all(action_row: int):
+    for h in state.list_handoffs(action_row=action_row):
+        if h["status"] == "cancelled":
+            hist = _loads(h.get("history_json"), [])
+            prev = next((x["status"] for x in reversed(hist[:-1]) if x.get("status") != "cancelled"), "draft")
+            _push_history(h, prev, by="我", note="待办重新打开")
+
+
+def set_due(action_row: int, due: str):
+    """截止日期调整：未完成的协同事项同步新的截止日期（转交单正文里的日期一并替换）。"""
+    for h in state.list_handoffs(action_row=action_row):
+        if h["status"] in CLOSED or not due:
+            continue
+        msg = (h.get("message") or "")
+        if h.get("due"):
+            msg = msg.replace(f"在 {h['due']} 前", f"在 {due} 前")
+        state.update_handoff(h["id"], due=due, message=msg)
 
 
 def set_step(action_row: int, index: int, done: bool):

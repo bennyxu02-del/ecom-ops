@@ -136,7 +136,22 @@ def status() -> dict:
     rs = roles()
     return dict(enabled=enabled(), ready=ok, error=err, app_id=creds()[0][:8] + "…" if creds()[0] else None,
                 roles={k: {kk: vv for kk, vv in v.items() if kk != "updated_at"} for k, v in rs.items()},
-                role_list=ROLES, callback_online=callback_online())
+                role_list=ROLES, callback_online=callback_online(),
+                last_callback=state.get_setting("feishu_last_callback"))
+
+
+def build_test_card() -> dict:
+    return {"config": {"wide_screen_mode": True, "update_multi": True},
+            "header": {"template": "blue", "title": {"tag": "plain_text", "content": "【测试】卡片按钮回调"}},
+            "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "点击下方按钮，平台「集成」页会显示回调是否正常。"}},
+                         {"tag": "action", "actions": [{"tag": "button", "text": {"tag": "plain_text", "content": "测试回调"},
+                                                        "type": "primary", "value": {"test": 1}}]}]}
+
+
+def build_test_done_card() -> dict:
+    return {"config": {"wide_screen_mode": True, "update_multi": True},
+            "header": {"template": "green", "title": {"tag": "plain_text", "content": "【测试】卡片按钮回调"}},
+            "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "✅ **回调正常**：平台已收到按钮点击。"}}]}
 
 
 def callback_online() -> bool:
@@ -148,8 +163,8 @@ def callback_online() -> bool:
 # ---------------------------------------------------------------------------
 # 卡片
 # ---------------------------------------------------------------------------
-STATUS_TEXT = {"sent": "待处理", "received": "已收到，处理中", "done": "已完成", "question": "有疑问",
-               "approved": "已批准", "declined": "已驳回"}
+STATUS_TEXT = {"sent": "待处理", "received": "已收到，处理中", "done": "已完成", "question": "有疑问，等待回复",
+               "approved": "已批准", "declined": "已驳回", "cancelled": "已取消，无需处理"}
 TEMPLATE = {"transfer": "orange", "approval": "blue"}
 
 
@@ -161,7 +176,7 @@ def build_card(h: dict, link: str | None) -> dict:
     """h：decorate_handoff(with_context=True) 的结果。"""
     approval = h["kind"] == "approval"
     a = h.get("action") or {}
-    closed = h["status"] in ("done", "approved", "declined")
+    closed = h["status"] in ("done", "approved", "declined", "cancelled")
     body = h.get("message") or ""
     # 正文去掉标题行和处理入口（卡片自带）
     lines = [x for x in body.split("\n") if not x.startswith("处理入口：")]
@@ -169,7 +184,7 @@ def build_card(h: dict, link: str | None) -> dict:
         lines = lines[1:]
     text = "\n".join(lines).strip()
     elements = [{"tag": "div", "text": {"tag": "lark_md", "content": _md(text)}}]
-    status_line = f"**当前状态：{STATUS_TEXT.get(h['status'], h['status'])}**"
+    status_line = f"**当前状态：{STATUS_TEXT.get(h['status'], h['status'])}**" + (f"　截止 {h['due']}" if h.get("due") and not closed else "")
     if h.get("note"):
         status_line += f"　{_md(h['note'])}"
     elements += [{"tag": "hr"}, {"tag": "div", "text": {"tag": "lark_md", "content": status_line}}]
@@ -192,6 +207,6 @@ def build_card(h: dict, link: str | None) -> dict:
         elements.append({"tag": "action", "actions": actions})
     title = ("【审批申请】" if approval else "【协同请求】") + (a.get("product_name") or "")
     return {"config": {"wide_screen_mode": True, "update_multi": True},
-            "header": {"template": "green" if closed else TEMPLATE[h["kind"]],
+            "header": {"template": "grey" if h["status"] == "cancelled" else "green" if closed else TEMPLATE[h["kind"]],
                        "title": {"tag": "plain_text", "content": title}},
             "elements": elements}

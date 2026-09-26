@@ -6,7 +6,7 @@ import { HandoffTag } from "../components/HandoffSendModal";
 import { useLoad } from "../hooks";
 
 const fmtTime = (t: number) => new Date(t * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-const ACT: Record<string, string> = { draft: "创建", sent: "发出", received: "已接收", done: "已完成", question: "提出疑问", approved: "批准", declined: "驳回" };
+const ACT: Record<string, string> = { draft: "创建", sent: "发出", received: "已接收", done: "已完成", question: "提出疑问", approved: "批准", declined: "驳回", cancelled: "取消" };
 
 /** 协同方处理页：从飞书卡片或转交单链接打开，独立页面，适配手机 */
 export default function HandoffView() {
@@ -19,7 +19,7 @@ export default function HandoffView() {
   if (error) return <div className="hv"><Result status="warning" title="打不开这个协同事项" subTitle={error} /></div>;
   if (!h) return <div className="hv"><div className="empty"><Spin /></div></div>;
   const approval = h.kind === "approval";
-  const closed = ["done", "approved", "declined"].includes(h.status);
+  const closed = ["done", "approved", "declined", "cancelled"].includes(h.status);
 
   const respond = async (status: string) => {
     if ((status === "question" || status === "declined") && !note.trim()) { message.warning(status === "declined" ? "请填写驳回原因" : "请写下你的疑问"); return; }
@@ -44,6 +44,7 @@ export default function HandoffView() {
         </div>
         <pre className="hv-msg">{h.message}</pre>
         {h.status === "draft" && <div className="verify bad">发起人还没有发送这个事项。</div>}
+        {h.status === "cancelled" && <div className="verify bad">发起人已取消这条协同请求，无需继续处理。</div>}
         {!closed && h.status !== "draft" && (
           <>
             <Input.TextArea rows={2} placeholder={approval ? "备注（驳回时必填）" : "处理说明或疑问（选填，提出疑问时必填）"} value={note} onChange={e => setNote(e.target.value)} style={{ marginTop: 12 }} />
