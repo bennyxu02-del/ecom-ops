@@ -36,8 +36,12 @@ echo "------------------------------------------------------------"
 echo "然后在浏览器打开：https://github.com/$REPO/settings/keys/new"
 echo "  Title 随便填（如 server），Key 粘贴上面那一行，不要勾选 Allow write access，点 Add key。"
 echo
-until ssh -T github-ecom 2>&1 | grep -q "successfully authenticated"; do
+# 注意：GitHub 认证成功时 ssh 也返回非 0，所以只看输出文字
+while true; do
   read -rp "添加好后按回车继续检查……" _
+  OUT="$(ssh -T github-ecom 2>&1 || true)"
+  if echo "$OUT" | grep -q "successfully authenticated"; then break; fi
+  echo "    还没连通，GitHub 返回：$OUT"
 done
 echo "    已连通 GitHub"
 
