@@ -60,6 +60,14 @@ export default function TodoModal({ open, source, productId, draft, plan, cardId
     if (!productId && !products.length) api<any[]>("/api/products").then(setProducts).catch(() => {});
   }, [open]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  const trackMetric: string | undefined = Form.useWatch("track_metric", form);
+  const recMetric: string | undefined = plan?.track?.ai_metric || plan?.track?.metric || draft?.track_metric;
+  const NAMES: Record<string, string> = { variant_units: "断货规格销量", uv_paid: "付费访客", uv_search: "搜索访客", days_of_supply: "库存可售天数" };
+  const extra = [...new Set([plan?.track?.ai_metric, plan?.track?.metric].filter((m): m is string => !!m && !TRACK_METRICS.some(([v]) => v === m)))];
+  const metricOptions = [
+    ...extra.map(m => ({ value: m, label: m === plan?.track?.metric ? plan.track.metric_name || NAMES[m] || m : NAMES[m] || m })),
+    ...TRACK_METRICS.map(([v, l]) => ({ value: v, label: l })),
+  ];
   const others = [...new Set(steps.filter(s => s?.text?.trim() && s.by !== "我").map(s => s.by))];
   const bound = (r: string) => fs?.ready && fs?.roles?.[r]?.open_id;
   const nFeishu = others.filter(bound).length;
@@ -127,19 +135,15 @@ export default function TodoModal({ open, source, productId, draft, plan, cardId
           <Form.Item name="due" label={<>截止日期{draft?.due_is_default && <span className="muted small" style={{ marginLeft: 6 }}>默认 3 天</span>}</>} style={{ marginBottom: 12 }}>
             <DatePicker allowClear={false} style={{ width: 160 }} />
           </Form.Item>
-          {plan ? (
-            <Form.Item label="完成后跟踪" style={{ marginBottom: 12 }}>
-              <span className="sec">{plan.track?.days} 天看{plan.track?.metric_name}</span>
-            </Form.Item>
-          ) : <>
-            <Form.Item name="track_metric" label="完成后跟踪" style={{ marginBottom: 12 }}>
-              <Select style={{ width: 140 }} options={TRACK_METRICS.map(([v, l]) => ({ value: v, label: l }))} />
-            </Form.Item>
-            <Form.Item name="track_days" label="跟踪天数" style={{ marginBottom: 12 }}>
-              <InputNumber min={3} max={30} addonAfter="天" style={{ width: 110 }} />
-            </Form.Item>
-          </>}
+          <Form.Item name="track_metric" style={{ marginBottom: 12 }}
+            label={<>完成后跟踪{recMetric && trackMetric === recMetric && <Tag bordered={false} color="purple" style={{ marginLeft: 6, marginRight: 0 }}>AI 推荐</Tag>}</>}>
+            <Select style={{ width: 160 }} options={metricOptions} />
+          </Form.Item>
+          <Form.Item name="track_days" label="跟踪天数" style={{ marginBottom: 12 }}>
+            <InputNumber min={3} max={30} addonAfter="天" style={{ width: 110 }} />
+          </Form.Item>
         </Space>
+        <div className="small muted" style={{ marginTop: -6, marginBottom: 10 }}>步骤全部完成后开始跟踪；复盘时用这个指标对比执行前后，AI 已按方案推荐，可以换。</div>
         <Form.Item name="note" label="备注" style={{ marginBottom: 8 }}><Input.TextArea rows={2} placeholder="为什么要做，可选" maxLength={300} /></Form.Item>
       </Form>
       {others.length > 0 && (

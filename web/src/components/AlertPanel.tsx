@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Drawer, Dropdown, Input, Modal, Spin, Tag, Timeline, Tooltip } from "antd";
+import { App, Button, Drawer, Dropdown, Input, InputNumber, Modal, Select, Spin, Tag, Timeline, Tooltip } from "antd";
 import { ArrowRightOutlined, CheckOutlined, LoadingOutlined, RedoOutlined, SendOutlined, CalculatorOutlined } from "@ant-design/icons";
 import { Link, useNavigate } from "react-router-dom";
 import { api, sse } from "../api";
@@ -9,7 +9,7 @@ import Markdown from "./Markdown";
 import { Estimate } from "./PlanCard";
 import ReasonModal from "./ReasonModal";
 import ReportChart from "./ReportChart";
-import TodoModal from "./TodoModal";
+import TodoModal, { TRACK_METRICS } from "./TodoModal";
 
 type Msg = { role: "user" | "assistant"; content: string; steps?: string[]; plan_updated?: boolean; decision?: any; pending?: boolean; unmatched?: string[] };
 
@@ -18,7 +18,7 @@ export const STATUS_COLOR: Record<string, string> = {
 };
 
 /** 当前方案卡：AI 初版或对话调整后的方案 */
-function CurrentPlan({ p, flash }: { p: any; flash: boolean }) {
+function CurrentPlan({ p, flash, rec, onTrack }: { p: any; flash: boolean; rec?: string; onTrack?: (metric: string, name: string, days: number) => void }) {
   const owners: string[] = p.step_owners || [];
   return (
     <div className={"plan cur-plan" + (flash ? " flash" : "")}>
@@ -49,7 +49,19 @@ function CurrentPlan({ p, flash }: { p: any; flash: boolean }) {
               </div>);
           })}
         </div>
-        <div className="small sec">截止：{p.due_days ?? 3} 天内　·　跟踪：完成后 {p.track?.days} 天看{p.track?.metric_name}</div>
+        {onTrack ? (() => {
+          const opts = [...(p.track?.metric && !TRACK_METRICS.some(([v]) => v === p.track.metric) ? [[p.track.metric, p.track.metric_name]] : []), ...TRACK_METRICS];
+          return (
+            <div className="small sec track-edit">截止：{p.due_days ?? 3} 天内　·　跟踪：完成后
+              <InputNumber size="small" min={3} max={30} value={p.track?.days} style={{ width: 64 }}
+                onChange={v => v && onTrack(p.track.metric, p.track.metric_name, Number(v))} />天看
+              <Select size="small" value={p.track?.metric} style={{ width: 130 }} popupMatchSelectWidth={false}
+                options={opts.map(([v, l]) => ({ value: v, label: l }))}
+                onChange={v => onTrack(v, (opts.find(([k]) => k === v) || [v, v])[1] as string, p.track?.days || 7)} />
+              {rec && p.track?.metric === rec ? <Tag bordered={false} color="purple">AI 推荐</Tag>
+                : <Tooltip title="复盘时用这个指标对比执行前后"><span className="muted">已手动修改</span></Tooltip>}
+            </div>);
+        })() : <div className="small sec">截止：{p.due_days ?? 3} 天内　·　跟踪：完成后 {p.track?.days} 天看{p.track?.metric_name}</div>}
       </div>
     </div>
   );
@@ -88,6 +100,7 @@ export default function AlertPanel({ cid, onClose, onChanged, onOpen }: {
   const [ignoring, setIgnoring] = useState(false);
   const [todoOpen, setTodoOpen] = useState(false);
   const [decided, setDecided] = useState(false);
+  const [recTrack, setRecTrack] = useState<string | undefined>();
   const chatEnd = useRef<HTMLDivElement>(null);
   const chatN = useRef(-1);
   const { message } = App.useApp();
@@ -96,7 +109,7 @@ export default function AlertPanel({ cid, onClose, onChanged, onOpen }: {
 
   const apply = (x: any) => {
     chatN.current = (x.messages || []).length;
-    setD(x); setPlan(x.plan); setMsgs((x.messages || []).map((m: any) => ({ ...m }))); setSuggested(x.suggested || null);
+    setD(x); setPlan(x.plan); setRecTrack(x.plan?.track?.metric); setMsgs((x.messages || []).map((m: any) => ({ ...m }))); setSuggested(x.suggested || null);
   };
   const toTop = () => document.querySelector(".alert-panel .ant-drawer-body")?.scrollTo({ top: 0, behavior: "smooth" });
   useEffect(() => {
@@ -125,7 +138,7 @@ export default function AlertPanel({ cid, onClose, onChanged, onOpen }: {
         if (ev.type === "delta") { acc += ev.text; upd(m => ({ ...m, content: acc })); }
         if (ev.type === "result") {
           upd(m => ({ ...m, content: ev.text, pending: false, plan_updated: !!ev.plan, decision: ev.decision, unmatched: ev.unmatched_numbers }));
-          if (ev.plan) { setPlan(ev.plan); setFlash(true); setTimeout(() => setFlash(false), 1600); }
+          if (ev.plan) { setPlan(ev.plan); setRecTrack(ev.plan.track?.metric); setFlash(true); setTimeout(() => setFlash(false), 1600); }
           if (ev.decision) setSuggested(ev.decision);
         }
         if (ev.type === "error") upd(m => ({ ...m, content: "出错了：" + ev.message, pending: false }));
@@ -202,9 +215,10 @@ export default function AlertPanel({ cid, onClose, onChanged, onOpen }: {
         {d.can_todo && (decidable || c.status === "doing") && (<>
           <div className="sec-title">{decidable ? "当前方案" : "转待办时的方案"}
             {decidable && (d.plan_is_adjusted || plan?.adjusted) ? <Button size="small" type="link" icon={<RedoOutlined />} onClick={resetChat}>回到 AI 初版</Button> : null}</div>
-          {plan ? <CurrentPlan p={plan} flash={flash} /> : <div className="muted small">动作库里没有匹配的方案，可以在下面告诉 AI 你想怎么做。</div>}
+          {plan ? <CurrentPlan p={plan} flash={flash} rec={recTrack}
+            onTrack={decidable ? (metric, name, days) => setPlan({ ...plan, track: { ...plan.track, metric, metric_name: name, days, ai_metric: recTrack } }) : undefined} /> : <div className="muted small">动作库里没有匹配的方案，可以在下面告诉 AI 你想怎么做。</div>}
           {others.length > 0 && decidable && (
-            <div className="alt-plans small">其他方案：{others.map((p: any) => <Button key={p.name} size="small" onClick={() => setPlan(p)}>{p.name}</Button>)}</div>)}
+            <div className="alt-plans small">其他方案：{others.map((p: any) => <Button key={p.name} size="small" onClick={() => { setPlan(p); setRecTrack(p.track?.metric); }}>{p.name}</Button>)}</div>)}
         </>)}
 
         {decidable && (<>

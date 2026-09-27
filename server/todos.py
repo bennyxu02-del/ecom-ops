@@ -73,6 +73,8 @@ def build_plan(name: str, pid: str, title: str, steps: list, track_metric: str |
             plan["steps"] = [s["text"] for s in steps]
             plan["step_owners"] = [s["by"] for s in steps]
         track = dict(plan.get("track") or {})
+        if track_metric and track_metric in METRIC_NAMES and track_metric != track.get("metric"):
+            track.update(metric=track_metric, metric_name=METRIC_NAMES[track_metric])     # 业务换了 AI 推荐的跟踪指标
         track["days"] = int(track_days or track.get("days") or 5)
         plan["track"] = track
     else:

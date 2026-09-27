@@ -336,3 +336,4 @@ textarea.editor { width: 100%; min-height: 560px; font: 13px/1.7 ui-monospace, S
 .set-rows > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13.5px; }
 .dotted { border-bottom: 1px dashed var(--text-3); cursor: help; }
 .push-preview { white-space: pre-wrap; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; font-size: 13px; font-family: inherit; margin: 0; }
+.track-edit { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

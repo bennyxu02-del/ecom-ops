@@ -320,6 +320,17 @@ class Chat(Base):
         C.delete(f"/api/alerts/{P02}/chat?ds=3c")
         self.assertFalse(C.get(f"/api/alerts/{P02}?ds=3c").json()["plan_is_adjusted"])
 
+    def test_track_metric_can_be_changed(self):
+        plan = C.get(f"/api/alerts/{P01}?ds=3c").json()["plan"]
+        self.assertEqual(plan["track"]["metric"], "variant_units")          # AI 推荐：断货规格销量
+        a = C.post("/api/todos?ds=3c", json=dict(product_id="P01", name=plan["name"], steps=[], plan=plan, source="alert",
+                                                 card_id=P01, track_metric="cvr", track_days=7)).json()
+        self.assertEqual((a["track_metric"], a["track_days"]), ("cvr", 7))
+        self.assertEqual(a["plan"]["track"]["metric_name"], "支付转化率")
+        b = C.post("/api/todos?ds=3c", json=dict(product_id="P02", name="不改指标", steps=[], plan=plan, source="alert",
+                                                 track_metric="bad")).json()
+        self.assertEqual(b["track_metric"], "variant_units")                  # 不认识的指标保持 AI 推荐
+
     def test_margin_floor_not_bypassed(self):
         p, why, ev = alert_chat.merge_plan("3c", "P02", None, {"type": "price", "coupon": 120})
         self.assertIsNone(p)
