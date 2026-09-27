@@ -7,6 +7,7 @@ import Overview from "./pages/Overview";
 import Products from "./pages/Products";
 import ProductDetail from "./pages/ProductDetail";
 import Alerts from "./pages/Alerts";
+import AlertSettings from "./pages/AlertSettings";
 import Actions, { mineCount } from "./pages/Actions";
 import Reports from "./pages/Reports";
 import ReportView from "./pages/ReportView";
@@ -56,11 +57,16 @@ function Shell() {
   const loc = useLocation();
 
   const refreshMeta = useCallback(() => {
-    api<any[]>("/api/alerts?today=true&status=pending,processing").then(a => setAlertCount(a.length)).catch(() => {});
+    api<any>("/api/alerts/meta").then(m => setAlertCount(m.counts?.pending || 0)).catch(() => {});
     api<any[]>("/api/actions").then(xs => setCollabCount(mineCount(xs))).catch(() => {});
   }, []);
 
   useEffect(() => { api<Dataset[]>("/api/datasets").then(setDatasets); }, []);
+  // 从飞书消息打开的链接带着数据集（…/alerts?ds=snacks&open=…）：先切到对应数据集
+  useEffect(() => {
+    const q = new URLSearchParams(loc.search).get("ds");
+    if (q && q !== ds && (q === "3c" || q === "snacks")) { setDs(q); setDsState(q); }
+  }, [loc.search]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { refreshMeta(); }, [ds, refreshMeta]);
   useEffect(() => { window.scrollTo(0, 0); }, [loc.pathname]);
 
@@ -97,6 +103,7 @@ function Shell() {
             <Route path="/products" element={<Products />} />
             <Route path="/product/:pid" element={<ProductDetail />} />
             <Route path="/alerts" element={<Alerts />} />
+            <Route path="/alerts/settings" element={<AlertSettings />} />
             <Route path="/actions" element={<Actions />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/report/:rid" element={<ReportView />} />

@@ -36,7 +36,10 @@ MIGRATIONS = [("actions", "step_done", "TEXT"), ("actions", "context_json", "TEX
               ("handoffs", "reminded_at", "REAL"), ("handoffs", "remind_count", "INTEGER"), ("handoffs", "auto_reminds", "INTEGER"),
               ("actions", "outcome", "TEXT"), ("actions", "review_note", "TEXT"), ("actions", "closed_date", "TEXT"),
               ("actions", "track_days", "INTEGER"), ("actions", "early_end", "INTEGER"), ("actions", "cancel_reason", "TEXT"),
-              ("reports", "params_json", "TEXT"), ("reports", "charts_json", "TEXT"), ("reports", "extra_json", "TEXT")]
+              ("reports", "params_json", "TEXT"), ("reports", "charts_json", "TEXT"), ("reports", "extra_json", "TEXT"),
+              ("alert_state", "decision", "TEXT"), ("alert_state", "watch_until", "TEXT"), ("alert_state", "action_row", "INTEGER"),
+              ("alert_state", "log_json", "TEXT"), ("alert_state", "severity", "TEXT"), ("alert_state", "rules_json", "TEXT"),
+              ("alert_state", "product_id", "TEXT"), ("alert_state", "closed_date", "TEXT"), ("alert_state", "flags_json", "TEXT")]
 
 # v9 起：待办只有 doing / tracking / review / done / cancelled；协同只有 pending / notified / question / done / cancelled
 _OLD_ACTION = {"adopted": "doing", "transferred": "doing", "declined": "doing", "executed": "tracking"}
@@ -55,6 +58,14 @@ def _migrate(c: sqlite3.Connection):
         c.execute("UPDATE actions SET status=? WHERE status=?", (new, old))
     for old, new in _OLD_HANDOFF.items():
         c.execute("UPDATE handoffs SET status=? WHERE status=?", (new, old))
+    # v12 起：预警状态按「决定」走 —— pending 待决定 / doing 处理中 / watch 观察中 / resolved 已解决 / closed 已关闭 / recovered 自然恢复
+    c.execute("UPDATE alert_state SET status='closed', decision='ignore' WHERE status='ignored'")
+    c.execute("UPDATE alert_state SET status='resolved' WHERE status='done'")
+    for r in c.execute("SELECT ds, card_id FROM alert_state WHERE status='processing'").fetchall():
+        a = c.execute("SELECT id FROM actions WHERE ds=? AND card_id=? AND status!='cancelled' ORDER BY id DESC LIMIT 1",
+                      (r["ds"], r["card_id"])).fetchone()
+        c.execute("UPDATE alert_state SET status=?, decision=?, action_row=? WHERE ds=? AND card_id=?",
+                  ("doing" if a else "pending", "todo" if a else None, a["id"] if a else None, r["ds"], r["card_id"]))
 
 
 def conn() -> sqlite3.Connection:
@@ -103,6 +114,16 @@ def set_card(ds, card_id, status, reason=None, note=None):
       "ON CONFLICT(ds,card_id) DO UPDATE SET status=excluded.status, reason=COALESCE(excluded.reason, alert_state.reason),"
       " note=COALESCE(excluded.note, alert_state.note), updated_at=excluded.updated_at",
       (ds, card_id, status, reason, note, time.time()))
+
+
+def upsert_card(ds, card_id, **kw):
+    kw["updated_at"] = time.time()
+    if q("SELECT 1 FROM alert_state WHERE ds=? AND card_id=?", (ds, card_id)):
+        sets = ",".join(f"{k}=?" for k in kw)
+        x(f"UPDATE alert_state SET {sets} WHERE ds=? AND card_id=?", (*kw.values(), ds, card_id))
+    else:
+        kw.update(ds=ds, card_id=card_id)
+        x(f"INSERT INTO alert_state({','.join(kw)}) VALUES({','.join('?' * len(kw))})", tuple(kw.values()))
 
 
 # ---------------- 动作 ----------------

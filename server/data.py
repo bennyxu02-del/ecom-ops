@@ -1,8 +1,10 @@
 """数据集注册与业务视图：总览、商品、问题卡（叠加用户状态）。"""
 from __future__ import annotations
 
+import copy
 import os
 import threading
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -17,9 +19,62 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data" / "datasets"))
 DATASETS = {"3c": "3C 数码配件", "snacks": "休闲零食"}
 
-STATUS_NAMES = {"pending": "待处理", "processing": "处理中", "done": "已处理", "ignored": "已忽略", "recovered": "已恢复"}
-_lock = threading.Lock()
+_lock = threading.RLock()
 _cache: dict = {}
+
+# 预警设置页可以调整的参数：(配置键, 名称, 单位, 影响的规则)。单位：pct 百分比 / x 倍数 / day 天 / yuan 元 / num 数值 / bool 开关
+ALERT_PARAMS = [
+    ("gmv_drop_yellow", "GMV 下滑 · 黄色门槛", "pct", ["R01"]),
+    ("gmv_drop_red", "GMV 下滑 · 红色门槛", "pct", ["R01"]),
+    ("z_threshold", "偏离正常波动的倍数", "x", ["R02", "R03", "R08"]),
+    ("stockout_share_min", "断货规格平时至少占销量", "pct", ["R04"]),
+    ("replenish_lead_days", "补货周期", "day", ["R05"]),
+    ("price_gap", "比竞品贵多少算劣势", "pct", ["R06"]),
+    ("rating_drop", "评分下降多少", "num", ["R07"]),
+    ("alert.min_impact", "影响金额下限", "yuan", []),
+    ("alert.tail_stock_only", "长尾商品只监控断货类规则", "bool", []),
+    ("alert.recover_ratio", "恢复标准：回到出问题前水平的比例", "pct", []),
+    ("alert.ignore_silence_days", "忽略后同类预警静默", "day", []),
+]
+PARAM_KEYS = {k for k, *_ in ALERT_PARAMS}
+
+
+def _get_path(d: dict, key: str):
+    for k in key.split("."):
+        d = (d or {}).get(k)
+    return d
+
+
+def _set_path(d: dict, key: str, v):
+    ks = key.split(".")
+    for k in ks[:-1]:
+        d = d.setdefault(k, {})
+    d[ks[-1]] = v
+
+
+def alert_config(name: str) -> dict:
+    """预警设置：关掉的规则、调整过的参数、调整记录。"""
+    c = state.get_setting(f"alert_config__{name}", {}) or {}
+    return dict(disabled=list(c.get("disabled") or []), params=dict(c.get("params") or {}), log=list(c.get("log") or []))
+
+
+def custom_alerts(name: str) -> list[dict]:
+    return list(state.get_setting(f"custom_alerts__{name}", []) or [])
+
+
+def _scan(name: str):
+    """按预警设置重新计算品类配置并扫描。"""
+    c = _cache[name]
+    ds = c["ds"]
+    cfg = alert_config(name)
+    prof = copy.deepcopy(c["base_profile"])
+    for k, v in cfg["params"].items():
+        if k in PARAM_KEYS:
+            _set_path(prof, k, v)
+    ds.profile = prof
+    enabled = set(alerts.RULE_NAMES) - set(cfg["disabled"])
+    c["base_cards"] = alerts.scan(ds, enabled=enabled, custom=custom_alerts(name))
+    c["scanned_at"] = time.time()
 
 
 def get(ds_name: str):
@@ -28,8 +83,20 @@ def get(ds_name: str):
     with _lock:
         if ds_name not in _cache:
             ds = loader.load(DATA_DIR / ds_name, name=ds_name)
-            _cache[ds_name] = {"ds": ds, "base_cards": alerts.scan(ds), "health": {}}
+            _cache[ds_name] = {"ds": ds, "base_profile": copy.deepcopy(ds.profile), "health": {}}
+            _scan(ds_name)
         return _cache[ds_name]
+
+
+def rescan(name: str):
+    get(name)
+    with _lock:
+        _scan(name)
+    return _cache[name]
+
+
+def default_param(name: str, key: str):
+    return _get_path(get(name)["base_profile"], key)
 
 
 def ds_of(name):
@@ -47,27 +114,25 @@ def health_of(name, pid):
     return c["health"][pid]
 
 
-def cards(name) -> list[dict]:
+def cards(name, include_suppressed: bool = False, include_store: bool = True) -> list[dict]:
+    """问题卡叠加处理状态（见 alert_flow）。低于影响金额下限的「量」类预警默认不出卡（已经处理过的保留）。"""
+    from . import alert_flow
+    from core.custom_alerts import STORE
     base = get(name)["base_cards"]
-    st = state.card_states(name)
-    out = []
-    for c in base:
-        c = dict(c)
-        s = st.get(c["id"])
-        if s:
-            status = s["status"]
-            c["ignore_reason"] = s.get("reason")
-        else:
-            status = "recovered" if c["auto_status"] == "recovered" else "pending"
-        c["status"] = status
-        c["status_name"] = STATUS_NAMES[status]
-        c["severity_name"] = alerts.SEV_NAME[c["severity"]]
-        out.append(c)
-    return out
+    if not include_suppressed:
+        st = state.card_states(name)
+        base = [c for c in base if not c.get("suppressed") or (st.get(c["id"]) or {}).get("status")]
+    if not include_store:
+        base = [c for c in base if c["product_id"] != STORE]
+    return alert_flow.decorate(name, base)
+
+
+def product_cards(name) -> list[dict]:
+    return cards(name, include_store=False)
 
 
 def card_for(name, pid, today_only=False):
-    cs = [c for c in cards(name) if c["product_id"] == pid]
+    cs = [c for c in cards(name, include_store=False) if c["product_id"] == pid]
     if today_only:
         cs = [c for c in cs if c["is_today"]]
     return cs[0] if cs else None
@@ -112,7 +177,7 @@ def product_row(name, pid, t, cmap):
 
 def products(name, focus_only=False):
     t = tiers(name)
-    cmap = {c["product_id"]: c for c in cards(name) if c["is_today"]}
+    cmap = {c["product_id"]: c for c in cards(name, include_store=False) if c["is_today"]}
     rows = [product_row(name, pid, t[pid], cmap) for pid in ds_of(name).product_ids()]
     if focus_only:
         rows = [x for x in rows if x["focus"]]
@@ -147,7 +212,7 @@ def overview(name, window=7):
         lv = health_of(name, pid)["level"]
         if lv:
             hl[lv] += 1
-    todo = [c for c in today if c["status"] in ("pending", "processing")]
+    todo = [c for c in cs if c["group"] == "pending"]
     events = []
     ev = ds.events
     if not ev.empty:
@@ -161,11 +226,13 @@ def overview(name, window=7):
                          uv=dict(cur=a1["uv"], change=_chg(a1["uv"], a0["uv"])),
                          cvr=dict(cur=r(a1["cvr"]), change=_chg(a1["cvr"], a0["cvr"])),
                          aov=dict(cur=round(a1["aov"], 2), change=_chg(a1["aov"], a0["aov"]))),
-                alerts=dict(today=sev, pending=len(todo)), health=hl, trend=trend, tier_trend=tier_trend,
+                alerts=dict(today=sev, pending=len(todo), doing=sum(1 for c in cs if c["group"] == "doing"),
+                            opportunity=sum(1 for c in cs if c["group"] == "opportunity")), health=hl, trend=trend, tier_trend=tier_trend,
                 dates=[x["date"] for x in trend],
                 todo=[dict(id=c["id"], product_id=c["product_id"], product_name=c["product_name"], severity=c["severity"],
                            rule_names=c["rule_names"], gmv_impact=c["gmv_impact"], status_name=c["status_name"],
-                           first_date=c["first_date"], trigger_days=c["trigger_days"]) for c in todo][:6],
+                           first_date=c["first_date"], trigger_days=c["trigger_days"], expected=c.get("expected"),
+                           reopen_name=c.get("reopen_name"), store=c.get("store")) for c in todo][:6],
                 events=events, profile_name=ds.profile.get("name"))
 
 
@@ -193,7 +260,7 @@ def product_detail(name, pid):
             events.append(dict(date=e["date"].strftime("%Y-%m-%d"), type=e["event_type"], description=e["description"],
                                future=bool(e["date"] > ds.as_of)))
     card = card_for(name, pid)
-    all_cards = [c for c in cards(name) if c["product_id"] == pid]
+    all_cards = [c for c in cards(name, include_store=False) if c["product_id"] == pid]
     return dict(product_id=pid, product_name=p["product_name"], category=DATASETS.get(name), sub_category=p.get("sub_category"),
                 launch_date=str(pd.Timestamp(p["launch_date"]).date()), cost_price=p.get("cost_price"),
                 tier=t["tier_name"], lifecycle=t["lifecycle_name"], coef=t["coef"], focus=t["focus"], margin=t["margin"],
@@ -225,7 +292,6 @@ def seed():
     c = next((c for c in get(name)["base_cards"] if c["product_id"] == "P05"), None)
     if not c:
         return
-    state.set_card(name, c["id"], "done")
     plan = core_actions.annotate(dict(
         action_id="replenish", name="紧急补货", cause="stockout", cause_name="规格断货",
         target="编织快充数据线 · 1m 白色", params=dict(variant="1m 白色"),
@@ -244,6 +310,9 @@ def seed():
                            context_json=json.dumps(dict(summary="1m 白色 9 月 13 日断货，转化率明显下滑"), ensure_ascii=False),
                            log_json=json.dumps(log, ensure_ascii=False))
     hist = [dict(t=t0, status="notified", by="我", note="飞书推送"), dict(t=t0 + 3600, status="done", by="供应链", note=None)]
+    state.upsert_card(name, c["id"], status="doing", decision="todo", action_row=aid, product_id="P05", severity=c["severity"],
+                      rules_json=json.dumps(c["rules"]),
+                      log_json=json.dumps([dict(t=t0, date="2026-09-13", by="我", text="转待办：紧急补货")], ensure_ascii=False))
     state.add_handoff(ds=name, action_row=aid, product_id="P05", kind="transfer", role="供应链", assignee=None,
                       steps_json=json.dumps([0]), message="【协同请求】编织快充数据线 · 紧急补货", status="done",
                       channel="copy", due="2026-09-14", sent_at=t0, history_json=json.dumps(hist, ensure_ascii=False))

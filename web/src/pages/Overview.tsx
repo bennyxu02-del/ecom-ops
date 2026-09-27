@@ -55,7 +55,7 @@ export default function Overview() {
                 <div key={s}><div className="num" style={{ fontSize: 24, fontWeight: 650 }}>{o.alerts.today[s]}</div><Sev s={s} /></div>
               ))}
               <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                <div className="num" style={{ fontSize: 24, fontWeight: 650 }}>{o.alerts.pending}</div><span className="muted small">待处理</span>
+                <div className="num" style={{ fontSize: 24, fontWeight: 650 }}>{o.alerts.pending}</div><span className="muted small">待决定</span>
               </div>
             </div>
           </Card>
@@ -69,14 +69,16 @@ export default function Overview() {
           </Card>
         </div>
       </div>
-      <Card className="mt" title={<>今日待办<span className="hint">AI 已完成扫描，按严重度与影响金额排序；点击进入诊断</span></>} styles={{ body: { padding: 0 } }}>
+      <Card className="mt" title={<>待你决定的预警<span className="hint">按严重度与影响金额排序；点击打开处理面板</span></>} styles={{ body: { padding: 0 } }}
+        extra={<Link to="/alerts">预警中心 →</Link>}>
         {o.todo.length ? o.todo.map((c: any) => (
-          <AlertRow key={c.id} c={c} onClick={() => nav(`/product/${c.product_id}?diag=1`)}
-            extra={<><Tag bordered={false}>{c.status_name}</Tag><Button size="small" type="primary">AI 诊断</Button></>}>
-            <div className="t"><Sev s={c.severity} /> {c.product_name} <Tag bordered={false}>{c.rule_names.join(" · ")}</Tag>{c.expected && <Tag bordered={false}>预期内</Tag>}</div>
+          <AlertRow key={c.id} c={c} onClick={() => nav(`/alerts?open=${c.id}`)}
+            extra={<><Tag bordered={false} color="error">{c.status_name}</Tag><Button size="small" type="primary">去处理</Button></>}>
+            <div className="t"><Sev s={c.severity} /> {c.product_name} <Tag bordered={false}>{c.rule_names.join(" · ")}</Tag>
+              {c.reopen_name && <Tag bordered={false} color="warning">{c.reopen_name}</Tag>}</div>
             <div className="d">首次触发 {c.first_date} · 持续 {c.trigger_days} 天{c.gmv_impact > 0 ? ` · 影响 GMV 约 ${money(c.gmv_impact)}（估算）` : ""}</div>
           </AlertRow>
-        )) : <Empty style={{ padding: 32 }} description="今天没有待处理的预警" />}
+        )) : <Empty style={{ padding: 32 }} description="没有待决定的预警" />}
       </Card>
     </>
   );

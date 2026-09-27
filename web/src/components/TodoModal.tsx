@@ -17,7 +17,7 @@ export type TodoDraft = {
 
 type Props = {
   open: boolean;
-  source: "diagnosis" | "chat" | "manual" | "report";
+  source: "diagnosis" | "chat" | "manual" | "report" | "alert";
   productId?: string;          // 在商品页创建时固定商品
   draft?: TodoDraft | null;
   plan?: any;                  // 采纳 AI 方案时传入
@@ -27,7 +27,7 @@ type Props = {
   onCreated: (a: any) => void;
 };
 
-const TITLE = { diagnosis: "采纳方案，加入待办", chat: "从对话创建待办", manual: "新建待办", report: "从报告创建待办" };
+const TITLE = { diagnosis: "采纳方案，加入待办", chat: "从对话创建待办", manual: "新建待办", report: "从报告创建待办", alert: "用当前方案转待办" };
 
 /** 新建待办确认窗：三个入口共用。同事的步骤在这里直接看到会通知谁，保存即推送。 */
 export default function TodoModal({ open, source, productId, draft, plan, cardId, context, onClose, onCreated }: Props) {

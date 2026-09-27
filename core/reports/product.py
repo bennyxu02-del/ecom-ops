@@ -96,26 +96,8 @@ def build(ds, pid: str, card: dict | None = None, history: list[dict] | None = N
     conf_rule = "强：指标、事件、时间点三者对齐；中：对上两项；弱：只有指标异常"
 
     # ---- 五、已排除的原因
-    excluded = []
-    cf = (tool.get("check_factors") or {}).get("factors", {})
     main_keys = {c["cause"] for c in causes}
-    for k, x in cf.items():
-        if not x.get("checked") or x.get("abnormal"):
-            continue
-        if k == "stock":
-            excluded.append("不是库存问题：没有断货或库存不足的规格")
-        elif k == "price" and x.get("price") is not None and x.get("comp_price"):
-            excluded.append(f"不是价格问题：到手价 {price(x['price'])}，竞品 {price(x['comp_price'])}，价格指数 {x['price_index']:.2f}")
-        elif k == "rating" and x.get("rating_now") is not None:
-            excluded.append(f"不是口碑问题：评分 {x['rating_now']:.2f}（28 天均值 {x['rating_base_28d']:.2f}），近 7 日退款率 {rate(x.get('refund_rate_7d'))}")
-        elif k == "campaign":
-            excluded.append("不是活动变化：近期没有活动开始或结束")
-    for c in contrib:
-        if c["factor"] == "uv" and not (main_keys & {"paid_traffic_drop", "search_traffic_drop", "campaign_end", "growth_opportunity"}) \
-                and (c["share"] is None or c["share"] < share_t):
-            excluded.append(f"不是流量问题：访客数 {pct(c['change_pct'])}，对 GMV 变化的贡献不到 {share_t:.0%}")
-        if c["factor"] == "aov" and "aov_drop" not in main_keys and (c["share"] is None or c["share"] < share_t):
-            excluded.append(f"不是客单价问题：客单价 {pct(c['change_pct'])}")
+    excluded = excluded_causes(tool.get("check_factors") or {}, contrib, main_keys, share_t)
 
     # ---- 六、方案对比
     plans = []
@@ -293,3 +275,26 @@ def render(pack: dict, book: C.ChartBook) -> str:
     head(c)
     L += [f"- {x}" for x in c["facts"]["items"]]
     return "\n".join(L)
+
+
+def excluded_causes(check: dict, contrib: list, main_keys: set, share_t: float = 0.30) -> list[str]:
+    """诊断里查过、没有异常的因素 →「已排除的原因」（单品诊断报告、预警处理面板共用）。"""
+    excluded = []
+    for k, x in (check.get("factors") or {}).items():
+        if not x.get("checked") or x.get("abnormal"):
+            continue
+        if k == "stock":
+            excluded.append("不是库存问题：没有断货或库存不足的规格")
+        elif k == "price" and x.get("price") is not None and x.get("comp_price"):
+            excluded.append(f"不是价格问题：到手价 {price(x['price'])}，竞品 {price(x['comp_price'])}，价格指数 {x['price_index']:.2f}")
+        elif k == "rating" and x.get("rating_now") is not None:
+            excluded.append(f"不是口碑问题：评分 {x['rating_now']:.2f}（28 天均值 {x['rating_base_28d']:.2f}），近 7 日退款率 {rate(x.get('refund_rate_7d'))}")
+        elif k == "campaign":
+            excluded.append("不是活动变化：近期没有活动开始或结束")
+    for c in contrib or []:
+        if c["factor"] == "uv" and not (main_keys & {"paid_traffic_drop", "search_traffic_drop", "campaign_end", "growth_opportunity"}) \
+                and (c["share"] is None or c["share"] < share_t):
+            excluded.append(f"不是流量问题：访客数 {pct(c['change_pct'])}，对 GMV 变化的贡献不到 {share_t:.0%}")
+        if c["factor"] == "aov" and "aov_drop" not in main_keys and (c["share"] is None or c["share"] < share_t):
+            excluded.append(f"不是客单价问题：客单价 {pct(c['change_pct'])}")
+    return excluded

@@ -8,7 +8,7 @@ import { Delta, num } from "../format";
 import { HandoffTag } from "./HandoffSendModal";
 import { HandoffOps, StageTag, ago } from "./TodoViews";
 
-const SOURCE_COLOR: Record<string, string> = { diagnosis: "blue", chat: "purple", manual: "default", report: "cyan" };
+const SOURCE_COLOR: Record<string, string> = { diagnosis: "blue", chat: "purple", manual: "default", report: "cyan", alert: "orange" };
 export const SourceTag = ({ a }: { a: any }) => <Tag bordered={false} color={SOURCE_COLOR[a.source] || "default"}>{a.source_name}</Tag>;
 const STAGES = ["doing", "tracking", "review", "done"];
 const OUTCOMES: [string, string][] = [["effective", "有效"], ["ineffective", "无效"], ["unknown", "无法判断"]];
@@ -125,7 +125,8 @@ export default function ActionDrawer({ action, onClose, onChanged }: { action: a
       <Descriptions size="small" column={2} style={{ marginTop: 16 }} items={[
         { key: "p", label: "商品", children: <Link to={"/product/" + a.product_id} onClick={onClose}>{a.product_name}</Link> },
         { key: "st", label: "阶段", children: <StageTag a={a} /> },
-        { key: "src", label: "来源", children: <SourceTag a={a} /> },
+        { key: "src", label: "来源", children: <Space size={6}><SourceTag a={a} />
+            {a.card_id && <Link to={`/alerts?open=${a.card_id}`} onClick={onClose} className="small">来自预警 →</Link>}</Space> },
         { key: "c", label: "原因", children: a.cause_name || "—" },
         { key: "d", label: "截止", children: doing
             ? <Space size={6}><DatePicker size="small" value={a.due_date ? dayjs(a.due_date) : null} allowClear={false}

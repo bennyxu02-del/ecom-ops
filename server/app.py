@@ -29,9 +29,15 @@ sys.path.insert(0, str(ROOT))
 
 from core import actions as core_actions  # noqa: E402
 from core import sop, weekly  # noqa: E402
+from core.charts import METRICS as C_METRICS  # noqa: E402
+from core.tiering import TIER_NAMES  # noqa: E402
 from core.reports import SCENES  # noqa: E402
 
-from . import collab, data, feishu, llm_client, notify, state, todos  # noqa: E402
+from core import alerts as core_alerts  # noqa: E402
+from core import custom_alerts  # noqa: E402
+
+from . import alert_detail, alert_flow, alert_push, collab, data, feishu, llm_client, notify, state, todos  # noqa: E402
+from .agent import alert_chat  # noqa: E402
 from .agent import chat as chat_agent  # noqa: E402
 from .agent import diagnose, report  # noqa: E402
 
@@ -99,10 +105,33 @@ class FocusBody(BaseModel):
     focus: bool
 
 
-class AlertUpdate(BaseModel):
-    status: Literal["pending", "processing", "done", "ignored"]
+class AlertDecide(BaseModel):
+    type: Literal["known", "ignore", "watch"]
     reason: Optional[str] = None
-    note: Optional[str] = None
+    days: Optional[int] = None
+
+
+class AlertChat(BaseModel):
+    messages: list[dict] = []
+    plan: Optional[dict] = None
+
+
+class AlertSettingsPut(BaseModel):
+    disabled: Optional[list[str]] = None
+    params: Optional[dict] = None
+    push: Optional[dict] = None
+
+
+class CustomAlert(BaseModel):
+    id: Optional[int] = None
+    name: str
+    scope: Literal["store", "all", "tier", "product"]
+    target: Optional[str] = None
+    metric: str
+    cond: Literal["below", "above", "drop", "rise"]
+    threshold: float
+    severity: Literal["red", "yellow", "blue"] = "yellow"
+    enabled: bool = True
 
 
 class StepUpdate(BaseModel):
@@ -147,7 +176,7 @@ class TodoCreate(BaseModel):
     track_metric: Optional[str] = None
     track_days: Optional[int] = None
     note: Optional[str] = None
-    source: Literal["diagnosis", "chat", "manual", "report"] = "manual"
+    source: Literal["diagnosis", "chat", "manual", "report", "alert"] = "manual"
     context: Optional[dict] = None
     plan: Optional[dict] = Field(None, description="采纳 AI 方案时传入诊断结果中的方案对象")
     card_id: Optional[str] = None
@@ -200,6 +229,7 @@ async def lifespan(_app):
         data.seed()
     if os.environ.get("REMINDERS", "on") != "off":
         notify.start_scheduler()
+        alert_push.start_scheduler()
     yield
 
 
@@ -267,27 +297,196 @@ def api_focus(pid: str, body: FocusBody, ds: str = DS):
 
 
 # ---------------- 预警 ----------------
-@app.get("/api/alerts", tags=["预警中心"])
-def api_alerts(ds: str = DS, today: bool = False, status: Optional[str] = None):
+@app.get("/api/alerts", tags=["预警中心"], summary="预警列表（含处理状态、分组、关联待办）")
+def api_alerts(ds: str = DS, today: bool = False, status: Optional[str] = None, group: Optional[str] = None):
     name = ds_name(ds)
     cs = data.cards(name)
     if today:
         cs = [c for c in cs if c["is_today"]]
     if status:
         cs = [c for c in cs if c["status"] in status.split(",")]
+    if group:
+        cs = [c for c in cs if c["group"] in group.split(",")]
     for c in cs:
-        if c["is_today"]:
+        if not c["store"]:
             hit = state.cache_get(diagnose.cache_key(name, c["product_id"]))
             c["ai_summary"] = hit["result"]["summary"] if hit else None
     return cs
 
 
-@app.patch("/api/alerts/{cid}", tags=["预警中心"])
-def api_alert_update(cid: str, body: AlertUpdate, ds: str = DS):
-    if body.status == "ignored" and not body.reason:
-        raise HTTPException(400, "忽略时需要选择原因")
-    state.set_card(ds_name(ds), cid, body.status, reason=body.reason, note=body.note)
+def _missing_rules(name: str) -> list[dict]:
+    cfg = data.alert_config(name)
+    av = core_alerts.rule_availability(data.ds_of(name))
+    return [dict(rule=r, name=core_alerts.RULE_NAMES[r], missing=why) for r, (ok, why) in av.items()
+            if not ok and r not in cfg["disabled"]]
+
+
+@app.get("/api/alerts/meta", tags=["预警中心"], summary="分组数量、缺数据提示、最近推送")
+def api_alerts_meta(ds: str = DS):
+    name = ds_name(ds)
+    cs = data.cards(name)
+    counts = {g: 0 for g in alert_flow.GROUPS}
+    for c in cs:
+        counts[c["group"]] += 1
+    suppressed = sum(1 for c in data.get(name)["base_cards"] if c.get("suppressed"))
+    hist = alert_push.history(name)
+    return dict(counts=counts, groups=alert_flow.GROUPS, missing=_missing_rules(name), suppressed=suppressed,
+                last_push=hist[0] if hist else None, push=alert_push.config(name), as_of=data.ds_of(name).as_of)
+
+
+@app.get("/api/alerts/settings", tags=["预警中心"], summary="预警设置：规则、门槛、推送、降噪、自定义预警")
+def api_alert_settings(ds: str = DS):
+    name = ds_name(ds)
+    dsx = data.ds_of(name)
+    cfg = data.alert_config(name)
+    av = core_alerts.rule_availability(dsx)
+    stats = alert_flow.rule_stats(name, data.cards(name, include_suppressed=True))
+    defs = {r["id"]: r for r in (data.methods(name)["alert_rules"].get("rules") or [])}
+    rules = [dict(id=r, name=n, condition=core_alerts.RULE_PLAIN.get(r) or (defs.get(r) or {}).get("condition"),
+                  severity=(defs.get(r) or {}).get("severity"),
+                  enabled=r not in cfg["disabled"], available=av[r][0], missing=av[r][1],
+                  stats=stats.get(r, dict(cards=0, ignored=0, trigger_days=0)),
+                  params=[k for k, _, _, rs in data.ALERT_PARAMS if r in rs]) for r, n in core_alerts.RULE_NAMES.items()]
+    params = [dict(key=k, label=lb, unit=u, rules=rs, value=data._get_path(dsx.profile, k), default=data.default_param(name, k),
+                   changed=k in cfg["params"]) for k, lb, u, rs in data.ALERT_PARAMS]
+    customs = []
+    for d in data.custom_alerts(name):
+        customs.append(dict(d, desc=custom_alerts.describe(d), stats=stats.get(f"C{d['id']}", dict(cards=0, ignored=0, trigger_days=0))))
+    t = data.tiers(name)
+    fs = feishu.status()
+    return dict(rules=rules, params=params, log=cfg["log"][-20:][::-1], push=alert_push.config(name),
+                push_history=alert_push.history(name)[:5], me_bound=bool(fs["ready"] and (fs["roles"].get("我") or {}).get("open_id")),
+                feishu_ready=fs["ready"], custom=customs,
+                options=dict(scopes=custom_alerts.SCOPES, conds=custom_alerts.CONDS,
+                             metrics=[dict(id=m, name=C_METRICS[m][0], unit=C_METRICS[m][1], store=C_METRICS[m][2]) for m in custom_alerts.METRICS],
+                             tiers=[dict(id=k, name=v) for k, v in TIER_NAMES.items()],
+                             products=[dict(id=p, name=dsx.product(p)["product_name"], tier=t[p]["tier"]) for p in dsx.product_ids()]),
+                dataset_name=data.DATASETS.get(name))
+
+
+def _check_param(key: str, v):
+    unit = next(u for k, _, u, _ in data.ALERT_PARAMS if k == key)
+    if unit == "bool":
+        return bool(v)
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "参数必须是数字")
+    lim = {"pct": (0.0, 1.0), "x": (0.5, 10.0), "day": (0, 60), "yuan": (0, 1e7), "num": (0.0, 5.0)}[unit]
+    if not lim[0] <= v <= lim[1]:
+        raise HTTPException(400, f"参数超出合理范围（{lim[0]:g}–{lim[1]:g}）")
+    return int(v) if unit == "day" else v
+
+
+@app.put("/api/alerts/settings", tags=["预警中心"], summary="保存预警设置（规则开关、门槛、推送），保存后重新扫描")
+def api_alert_settings_put(body: AlertSettingsPut, ds: str = DS):
+    name = ds_name(ds)
+    cfg = data.alert_config(name)
+    labels = {k: lb for k, lb, _, _ in data.ALERT_PARAMS}
+    today = data.ds_of(name).as_of.strftime("%Y-%m-%d")
+    changes = []
+    if body.disabled is not None:
+        bad = [r for r in body.disabled if r not in core_alerts.RULE_NAMES]
+        if bad:
+            raise HTTPException(400, f"未知规则 {bad}")
+        for r in core_alerts.RULE_NAMES:
+            was, now = r in cfg["disabled"], r in body.disabled
+            if was != now:
+                changes.append(f"{'关闭' if now else '开启'}规则「{core_alerts.RULE_NAMES[r]}」")
+        cfg["disabled"] = list(body.disabled)
+    if body.params is not None:
+        dsx = data.ds_of(name)
+        for k, v in body.params.items():
+            if k not in data.PARAM_KEYS:
+                raise HTTPException(400, f"未知参数 {k}")
+            v = _check_param(k, v)
+            old = data._get_path(dsx.profile, k)
+            if old != v:
+                changes.append(f"{labels[k]}：{_fmt_param(k, old)} → {_fmt_param(k, v)}")
+            if v == data.default_param(name, k):
+                cfg["params"].pop(k, None)
+            else:
+                cfg["params"][k] = v
+    if body.push is not None:
+        alert_push.set_config(name, **{k: body.push.get(k) for k in ("time", "enabled", "send_empty")})
+    if changes:
+        cfg["log"].append(dict(t=time.time(), date=today, by="我", changes=changes))
+    state.set_setting(f"alert_config__{name}", cfg)
+    if body.disabled is not None or body.params is not None:
+        data.rescan(name)
+    return api_alert_settings(ds)
+
+
+def _fmt_param(k, v):
+    unit = next(u for kk, _, u, _ in data.ALERT_PARAMS if kk == k)
+    if v is None:
+        return "—"
+    return {"pct": lambda x: f"{x:.0%}" if abs(x * 100 - round(x * 100)) < 1e-9 else f"{x:.1%}", "x": lambda x: f"{x:g} 倍",
+            "day": lambda x: f"{x:g} 天", "yuan": lambda x: f"{x:,.0f} 元", "num": lambda x: f"{x:g}",
+            "bool": lambda x: "开" if x else "关"}[unit](v)
+
+
+@app.post("/api/alerts/custom", tags=["预警中心"], summary="新建 / 修改自定义预警")
+def api_custom_alert(body: CustomAlert, ds: str = DS):
+    name = ds_name(ds)
+    lst = data.custom_alerts(name)
+    d = custom_alerts.validate(body.model_dump(), data.ds_of(name))
+    if d.get("id"):
+        if not any(x["id"] == d["id"] for x in lst):
+            raise HTTPException(404, "自定义预警不存在")
+        lst = [d if x["id"] == d["id"] else x for x in lst]
+    else:
+        d["id"] = max([x["id"] for x in lst] or [0]) + 1
+        lst.append(d)
+    state.set_setting(f"custom_alerts__{name}", lst)
+    data.rescan(name)
+    return dict(d, desc=custom_alerts.describe(d), hits=sum(1 for c in data.cards(name) if f"C{d['id']}" in c["rules"]))
+
+
+@app.delete("/api/alerts/custom/{xid}", tags=["预警中心"], summary="删除自定义预警")
+def api_custom_alert_del(xid: int, ds: str = DS):
+    name = ds_name(ds)
+    state.set_setting(f"custom_alerts__{name}", [x for x in data.custom_alerts(name) if x["id"] != xid])
+    data.rescan(name)
     return dict(ok=True)
+
+
+@app.post("/api/alerts/push-now", tags=["预警中心"], summary="立即扫描并推送「今日预警」到飞书")
+def api_alert_push_now(request: Request, ds: str = DS):
+    _base_url(request)
+    return alert_push.push(ds_name(ds), manual=True)
+
+
+@app.get("/api/alerts/push-preview", tags=["预警中心"], summary="预览今天要推送的内容（不发送）")
+def api_alert_push_preview(request: Request, ds: str = DS):
+    _base_url(request)
+    name = ds_name(ds)
+    dg = alert_push.digest(name)
+    return dict(digest=dg, text=alert_push.text_of(dg))
+
+
+@app.get("/api/alerts/{cid}", tags=["预警中心"], summary="预警处理面板：出了什么事、AI 初判、方案、对话记录、处理记录")
+def api_alert_detail(cid: str, ds: str = DS):
+    return alert_detail.detail(ds_name(ds), cid)
+
+
+@app.post("/api/alerts/{cid}/decide", tags=["预警中心"], summary="做决定：已知原因 / 忽略 / 先观察（转待办走新建待办）")
+def api_alert_decide(cid: str, body: AlertDecide, ds: str = DS):
+    name = ds_name(ds)
+    alert_flow.decide(name, cid, body.type, body.reason, body.days)
+    return alert_detail.detail(name, cid)
+
+
+@app.post("/api/alerts/{cid}/chat", tags=["预警中心"], summary="和 AI 对话调方案（SSE 流式）")
+def api_alert_chat(cid: str, body: AlertChat, ds: str = DS):
+    return sse(alert_chat.run(ds_name(ds), cid, body.messages, body.plan))
+
+
+@app.delete("/api/alerts/{cid}/chat", tags=["预警中心"], summary="清空对话，方案回到 AI 初版")
+def api_alert_chat_reset(cid: str, ds: str = DS):
+    name = ds_name(ds)
+    alert_chat.reset(name, cid)
+    return alert_detail.detail(name, cid)
 
 
 # ---------------- AI ----------------
@@ -296,9 +495,6 @@ def api_diagnose(pid: str, ds: str = DS, refresh: bool = False):
     name = ds_name(ds)
     if pid not in data.ds_of(name).product_ids():
         raise HTTPException(404, f"未知商品 {pid}")
-    c = data.card_for(name, pid, today_only=True)
-    if c and c["status"] == "pending":
-        state.set_card(name, c["id"], "processing")
     return sse(diagnose.run(name, pid, refresh=refresh))
 
 

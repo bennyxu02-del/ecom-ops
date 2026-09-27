@@ -38,7 +38,7 @@ def get_target(name, month) -> float | None:
 
 def scenes(name) -> dict:
     ds = data.ds_of(name)
-    cards = {c["product_id"]: c for c in data.cards(name) if c["is_today"]}
+    cards = {c["product_id"]: c for c in data.product_cards(name) if c["is_today"]}
     prods = []
     for pid in ds.product_ids():
         c = cards.get(pid)
@@ -75,7 +75,7 @@ def build_pack(name, scene, params):
     book = C.ChartBook(rp.get("extra_chart_limit", 3))
     params = dict(params or {})
     if scene == "weekly":
-        cards = data.cards(name)
+        cards = data.product_cards(name)
         diags = {}
         for c in cards:
             cached = state.cache_get(diagnose.cache_key(name, c["product_id"]))

@@ -554,3 +554,35 @@ def completeness(plan: dict) -> list[str]:
     if not plan.get("risks"):
         miss.append("前提或风险")
     return miss
+
+
+# ---------------------------------------------------------------------------
+# 方案测算：业务在对话里调整价格类方案时（改券面额、改到手价、加赠品），由这里重新算毛利与约束
+# ---------------------------------------------------------------------------
+def evaluate_plan(ds: Dataset, pid: str, coupon: float | None = None, new_price: float | None = None,
+                  gift_cost: float | None = None) -> dict:
+    """返回调整后的到手价、与竞品的价差、毛利测算和约束检查。低于毛利底线时 ok=False。"""
+    try:
+        g = _price_series(ds, pid)
+        cost = _cost(ds, pid)
+    except Skip as e:
+        return dict(ok=False, reason=str(e))
+    price = float(g["price"].iloc[-1])
+    comp = float(g["comp_price"].iloc[-1]) if g["comp_price"].iloc[-1] else None
+    p1 = float(new_price) if new_price else price - float(coupon or 0)
+    if p1 <= 0:
+        return dict(ok=False, reason="调整后的到手价必须大于 0")
+    extra = float(gift_cost or 0)
+    est = _price_estimate(price, cost, p1, extra_cost=extra)
+    out = dict(price_before=round(price, 2), price_after=round(p1, 2), coupon=coupon, gift_cost=gift_cost,
+               comp_price=comp, price_index_after=r(p1 / comp, 3) if comp else None,
+               gap_after=r(p1 / comp - 1, 4) if comp else None, price_gap_threshold=ds.profile.get("price_gap"),
+               estimate=est)
+    try:
+        checks, risk = _price_constraints(ds, pid, price, p1, est["margin_rate_after"])
+        out.update(ok=True, checks=checks, risk_notes=risk)
+    except Skip as e:
+        floor = ds.profile["constraints"]["margin_floor"]
+        out.update(ok=False, reason=str(e), checks=[dict(name="毛利底线", passed=False,
+                                                          detail=f"执行后毛利率 {est['margin_rate_after']:.0%}，底线 {floor:.0%}")])
+    return out

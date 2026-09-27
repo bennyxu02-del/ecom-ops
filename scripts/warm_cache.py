@@ -39,7 +39,7 @@ def main():
         return 1
     bad = 0
     for name in data.DATASETS:
-        pids = [c["product_id"] for c in data.cards(name) if c["is_today"]] + EXTRA.get(name, [])
+        pids = [c["product_id"] for c in data.product_cards(name) if c["is_today"]] + EXTRA.get(name, [])
         for pid in pids:
             runs = 3 if check else 1
             causes = []

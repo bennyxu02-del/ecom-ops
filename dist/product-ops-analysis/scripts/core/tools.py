@@ -189,3 +189,22 @@ def call(ds: Dataset, name: str, args: dict, **extra) -> dict:
     if name == "get_context":
         return get_context(ds, args["product_id"], card=extra.get("card"), tiers=extra.get("tiers"))
     return FUNCS[name](ds, **args)
+
+
+EVAL_PLAN_SPEC = {
+    "name": "evaluate_plan",
+    "description": "价格类方案调整后的测算：业务要改券面额、改到手价、加赠品时调用。返回调整后的到手价、与竞品的价差、执行后毛利率、"
+                   "保本销量增幅，以及毛利底线、调价权限、最低价保护的检查结果。方案里的这些数字只能以本工具的结果为准；ok=false 表示低于毛利底线，不能采用。",
+    "parameters": {"type": "object", "properties": {
+        "coupon": {"type": "number", "description": "优惠券面额（元），与 new_price 二选一"},
+        "new_price": {"type": "number", "description": "调整后的到手价（元）"},
+        "gift_cost": {"type": "number", "description": "赠品成本（元/件），没有赠品不传"}}},
+}
+
+
+def evaluate_plan(ds: Dataset, product_id: str, coupon=None, new_price=None, gift_cost=None) -> dict:
+    from .actions import evaluate_plan as _ev
+    return _ev(ds, product_id, coupon=coupon, new_price=new_price, gift_cost=gift_cost)
+
+
+FUNCS["evaluate_plan"] = evaluate_plan

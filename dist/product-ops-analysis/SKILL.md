@@ -37,9 +37,12 @@ python scripts/run.py adapt <用户的文件或目录> --out workdata
 python scripts/run.py scan --data workdata
 ```
 
-- 只汇报 `is_today` 为 true 的问题卡，按严重度（红 > 黄 > 蓝）和影响金额排序。
-- 每张卡写一行：商品、严重度、触发了什么、持续几天、影响 GMV 约多少（估算）。
-- `auto_status` 为 recovered 的是已恢复的历史问题，可以一句带过。
+- 只汇报 `is_today` 为 true 且 `suppressed` 为 false 的问题卡，按严重度（红 > 黄 > 蓝）和影响金额排序；`suppressed` 为 true 的是影响金额低于下限的小波动，不单独汇报。
+- 先写问题（`kind` = problem），再单独写机会（`kind` = opportunity）。
+- 每张卡写一行：商品、严重度、触发了什么、持续几天、影响 GMV 约多少（估算）；有 `in_transit` 的写上在途数量和到货日。
+- `expected` 不为空的是活动后的正常回落（预期内），一句带过，不作为问题。
+- `plateau` 不为空说明规则已不再触发、但指标还没回到出问题前的水平，要提醒不是已经好了。
+- `auto_status` 为 recovered 的是已恢复的历史问题（指标已回到出问题前的水平），可以一句带过。
 - 规则说明见 `references/alert_rules.md`。注意：新品期等生命周期会放宽阈值，没报警不代表没波动，而是在正常范围内。
 
 ## 任务 B：单品诊断（「这个商品为什么卖得不好」）

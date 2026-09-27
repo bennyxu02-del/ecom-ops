@@ -46,3 +46,10 @@ report:
   festival_cover_days: 3        # 活动：节日相关的会场应覆盖到节前几天
   worsening_days: 3             # 单品：近 N 天比本周前几天更差 = 在恶化
   extra_chart_limit: 3          # 每份报告 AI 最多补充几张图
+
+# 预警：降噪与恢复判断（预警设置页可调整）
+alert:
+  min_impact: 3000              # 只触发「量」的下滑（GMV / 访客 / 转化）且预计一周影响低于这个金额（元）时，不单独出预警
+  tail_stock_only: true         # 长尾商品只监控断货类规则
+  recover_ratio: 0.95           # 规则不再触发后，指标回到出问题前（首次触发前 7 天）的 95% 以上才算恢复
+  ignore_silence_days: 7        # 忽略后同一商品同一规则静默几天（严重度升级除外）

@@ -136,7 +136,7 @@ class TestTodos(unittest.TestCase):
         a = new(name=plan["name"], steps=[], plan=plan, source="diagnosis", card_id=card["id"], notify=False)
         self.assertEqual(a["source_name"], "AI 诊断")
         self.assertEqual(a["track_days"], plan["track"]["days"])
-        self.assertEqual(state.card_states("3c")[card["id"]]["status"], "processing")
+        self.assertEqual(state.card_states("3c")[card["id"]]["status"], "doing")
         r = C.post("/api/rejections?ds=3c", json=dict(product_id="P01", plan=plan, reason="成本过高")).json()
         self.assertTrue(r["ok"])
         self.assertEqual(len(C.get("/api/rejections?ds=3c&product_id=P01").json()), 1)

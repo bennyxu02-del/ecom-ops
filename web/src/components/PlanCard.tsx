@@ -7,7 +7,7 @@ export const MATERIAL: Record<string, string> = {
   "客服话术": "review_reply", "标题关键词建议": "title_keywords", "活动报名理由": "campaign_pitch",
 };
 
-function Estimate({ e }: { e: any }) {
+export function Estimate({ e }: { e: any }) {
   if (!e) return null;
   if (e.type === "price") return (
     <>

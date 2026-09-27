@@ -59,11 +59,18 @@ export default function ProductDetail() {
   if (!d) return <Loading error={error} />;
   const h = d.health;
   const card = d.card && d.card.is_today ? d.card : null;
+  const open = (d.cards || []).find((c: any) => ["pending", "watch", "doing"].includes(c.status));
   const avail = METRICS.filter(m => m[0] === "gmv" || d.series[m[0]]);
 
   return (
     <>
       <div style={{ marginBottom: 10 }}><Link to="/products" className="small">← 商品</Link></div>
+      {open && (
+        <Link to={`/alerts?open=${open.id}`} className={"alert-banner " + open.status}>
+          <Sev s={open.severity} />
+          <span>{open.status === "pending" ? "这个商品有一条预警待你决定" : open.status === "doing" ? "这个商品的预警正在处理中" : "这个商品的预警在观察中"}：{open.rule_names.join("、")}</span>
+          <span className="go">打开处理面板 →</span>
+        </Link>)}
       <Card>
         <div className="detail-head">
           <div>
