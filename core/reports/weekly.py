@@ -9,7 +9,7 @@ from .. import charts as C
 from .. import config, sop, tiering
 from ..metrics import DAY
 from ..weekly import effect
-from .common import chapter, events_between, mmdd, md, money, money_signed, num, pct, r, rate, ymd
+from .common import chapter, renumber, events_between, mmdd, md, money, money_signed, num, pct, r, rate, ymd
 
 LABELS = {
     "expected": ("预期内", "muted"),
@@ -266,7 +266,7 @@ def build(ds, cards: list[dict], actions: list[dict] | None = None, diagnoses: d
     ]
     pack = dict(scene="weekly", title=f"{prof.get('name', ds.category)}周度经营分析（{period}）", period=period,
                 subject=prof.get("name", ds.category), dataset=ds.name, as_of=ymd(ds.as_of),
-                chapters=chapters, actions=[n for n in nexts if n.get("can_todo")], data_notes=notes,
+                chapters=renumber(chapters), actions=[n for n in nexts if n.get("can_todo")], data_notes=notes,
                 params=dict(week_end=ymd(end), target=target))
     return pack, book
 

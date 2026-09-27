@@ -6,7 +6,7 @@ import pandas as pd
 from .. import charts as C
 from .. import config
 from ..metrics import DAY
-from .common import chapter, md, money, money_signed, num, pct, price, r, rate, ymd
+from .common import chapter, renumber, md, money, money_signed, num, pct, price, r, rate, ymd
 
 
 def list_campaigns(ds) -> list[dict]:
@@ -357,7 +357,7 @@ def build(ds, campaign_id: str, book: C.ChartBook | None = None):
         chapter(10, "notes", "数据说明", "哪些没有分析、为什么", dict(items=notes), None),
     ]
     pack = dict(scene="campaign", title=f"{camp['name']}活动复盘（{md(s0) if s0 == e0 else md(s0) + '–' + md(e0)}）", period=period, subject=subject,
-                dataset=ds.name, as_of=ymd(ds.as_of), campaign=camp, chapters=chapters, actions=acts, data_notes=notes,
+                dataset=ds.name, as_of=ymd(ds.as_of), campaign=camp, chapters=renumber(chapters), actions=acts, data_notes=notes,
                 params=dict(campaign_id=campaign_id))
     return pack, book
 

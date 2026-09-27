@@ -6,7 +6,7 @@ import pandas as pd
 from .. import charts as C
 from .. import sop, tiering
 from ..metrics import DAY
-from .common import chapter, events_between, md, money, money_signed, num, pct, price, r, rate, ymd
+from .common import chapter, renumber, events_between, md, money, money_signed, num, pct, price, r, rate, ymd
 
 # 根因 → 第四章用哪张图（通过图表工具画，参数由这里决定）
 CAUSE_CHART = {
@@ -172,7 +172,7 @@ def build(ds, pid: str, card: dict | None = None, history: list[dict] | None = N
         chapter(9, "notes", "数据说明", "哪些没有检查、为什么", dict(items=notes), None),
     ]
     pack = dict(scene="product", title=f"{pname}单品诊断（{ymd(end)}）", period=ymd(end), subject=pname, dataset=ds.name,
-                as_of=ymd(end), product_id=pid, card_id=(card or {}).get("id"), chapters=chapters, actions=actions,
+                as_of=ymd(end), product_id=pid, card_id=(card or {}).get("id"), chapters=renumber(chapters), actions=actions,
                 data_notes=notes, params=dict(product_id=pid), diagnosis=res)
     return pack, book
 

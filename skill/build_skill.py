@@ -151,6 +151,12 @@ def build():
     shutil.copy(M / "attribution_sop.md", DIST / "references" / "attribution_sop.md")
     shutil.copy(ROOT / "skill" / "data_spec.md", DIST / "references" / "data_spec.md")
     shutil.copytree(M / "playbooks", DIST / "references" / "playbooks")
+    # 剧本里的「验收案例」是平台用演示数据自测的预期结论，放进通用 Skill 会误导 Agent：打包时去掉（平台上的剧本不变）
+    import re
+    for f in (DIST / "references" / "playbooks").glob("*.md"):
+        t = f.read_text(encoding="utf-8")
+        t = re.sub(r"\n## 验收案例[^\n]*\n.*?(?=\n## |\Z)", "\n", t, flags=re.S)
+        f.write_text(t.rstrip() + "\n", encoding="utf-8")
     (DIST / "references" / "chart_library.md").write_text(chart_md(), encoding="utf-8")
     (DIST / "scripts").mkdir()
     shutil.copy(ROOT / "skill" / "run.py", DIST / "scripts" / "run.py")

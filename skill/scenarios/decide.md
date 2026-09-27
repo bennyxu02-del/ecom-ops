@@ -7,9 +7,9 @@
 ## 价格类方案测算（优惠券、降价、赠品）
 
 ```bash
-python <SKILL>/scripts/run.py simulate --product 坚果中秋礼盒 --coupon 15
-python <SKILL>/scripts/run.py simulate --product 坚果中秋礼盒 --new-price 149
-python <SKILL>/scripts/run.py simulate --product 坚果中秋礼盒 --coupon 10 --gift-cost 6
+python <SKILL>/scripts/run.py simulate --product <商品> --coupon 15
+python <SKILL>/scripts/run.py simulate --product <商品> --new-price 149
+python <SKILL>/scripts/run.py simulate --product <商品> --coupon 10 --gift-cost 6
 ```
 
 - `--coupon`：券面额（元），按每件抵扣计算；`--new-price`：新到手价（元），两者二选一；`--gift-cost`：赠品每件的成本（元）。按订单抵扣的券、满减券，要说明测算是按每件抵扣算的，实际每件让利会更小。
@@ -28,7 +28,7 @@ python <SKILL>/scripts/run.py simulate --product 坚果中秋礼盒 --coupon 10 
 
 **回答怎么写：**
 
-1. 结论先行：「给 15 元券后到手价 153 元，毛利率从 43.5% 降到 37.9%，销量至少要涨 25.9% 才能保住总毛利。」
+1. 结论先行，格式如：「给 X 元券后到手价 X 元，毛利率从 X% 降到 X%，销量至少要涨 X% 才能保住总毛利。」
 2. 逐条说明三项检查。没通过的要说后果：低于最低价会「破价，可能影响后续大促价格」，超出调价权限会「需要上级审批」。
 3. `ok` 为 false 时，明确说不能用，并用更小的券面额再算一次，给出一个能通过的选项。
 
@@ -42,7 +42,7 @@ python <SKILL>/scripts/run.py simulate --product 坚果中秋礼盒 --coupon 10 
 
 ```bash
 python <SKILL>/scripts/run.py stock
-python <SKILL>/scripts/run.py stock --products 充电宝
+python <SKILL>/scripts/run.py stock --products <商品>
 ```
 
 - 每个规格的状态分三种：断货、偏低（可售天数低于补货周期）、充足。按紧急程度排序。

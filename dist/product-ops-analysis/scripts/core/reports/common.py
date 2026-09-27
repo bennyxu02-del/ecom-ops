@@ -16,6 +16,16 @@ def chapter(no: int, key: str, title: str, question: str, facts: dict | None = N
                 chart=chart, judgment=judgment, show=show, notes=notes or [])
 
 
+def renumber(chapters: list[dict]) -> list[dict]:
+    """没有数据、不显示的章节不占编号：显示的章节按顺序连续编号（一、二、三……）。"""
+    i = 0
+    for c in chapters:
+        if c["show"]:
+            c["heading"] = f"{CN[i]}、{c['title']}"
+            i += 1
+    return chapters
+
+
 def r(x, n=4):
     if x is None:
         return None

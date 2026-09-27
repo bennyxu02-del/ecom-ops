@@ -1,6 +1,6 @@
 # 场景四：出报告
 
-用户说「出个周报」「这周生意怎么样，写成报告」「复盘一下国庆活动」「出一份某商品的诊断报告」时使用。三个场景各有一份**分析剧本**（`references/playbooks/`），写清楚了给谁看、要回答哪些问题、固定的章节、每章的计算和图表、判断标准和结论句式。
+用户说「出个周报」「这周生意怎么样，写成报告」「复盘一下上次大促」「出一份某商品的诊断报告」时使用。三个场景各有一份**分析剧本**（`references/playbooks/`），写清楚了给谁看、要回答哪些问题、固定的章节、每章的计算和图表、判断标准和结论句式。
 
 **动笔前，先读对应剧本和写作规则 `references/playbooks/writing_rules.md`。** 剧本里说的「平台」，在这里指本 Skill 的计算脚本；写作规则里的「draw_chart 图表工具」就是下面的 `chart` 命令。剧本里提到的待办、协同卡片、处理记录，是配套系统的功能，在这里没有：对应章节不会出现在数据包里，直接跳过；「一键转待办」改为在报告结尾列出「需要跟进的事」（事项、负责人、第一步）。
 
@@ -17,8 +17,16 @@ python <SKILL>/scripts/run.py report --scene campaign --campaign <活动编号> 
 python <SKILL>/scripts/run.py report --scene product --product <商品> --pack report_pack.json      # 单品诊断报告
 ```
 
-- 周报默认写数据最后一天所在的那一周。可以用 `--week-end YYYY-MM-DD` 指定周报的最后一天；用户给了月度目标时，加 `--target 目标金额（元）`，报告里会写目标进度。
-- 用户说「复盘国庆活动」时，先运行 `campaigns`，按名称和日期找到对应活动。找不到时把列表给用户选。
+先确定报告的对象，不要猜：
+
+| 报告 | 用户说清楚了 | 用户没说 |
+| --- | --- | --- |
+| 周报 | 用户说的那一周：`--week-end` 写那一周的最后一天（YYYY-MM-DD） | 默认写数据里最近的一周（截至数据最后一天），并在回答开头说明写的是哪 7 天 |
+| 活动复盘 | 先运行 `campaigns`，按用户说的名称、日期找到对应活动，`--campaign` 写活动编号 | 运行 `campaigns`，只有一个活动时直接用并说明；有多个时列出来让用户选 |
+| 单品诊断 | `--product` 写用户说的商品（名称或编号都行） | 用 `products` 列出商品让用户选；如果用户说的是「跌得最多的那个」这类描述，先用 `query` 找到再确认 |
+
+- 用户给了月度目标时，周报加 `--target 目标金额（元）`，报告里会写目标进度；没给就不写。
+- 名称匹配到多个商品或活动时，列出候选让用户确认。
 - 数据里没有活动记录时，活动复盘做不了，直接说明，并告诉用户需要什么数据（活动起止日期、参与商品）。
 
 ## 2. 按剧本写 Markdown 报告
@@ -34,8 +42,8 @@ python <SKILL>/scripts/run.py report --scene product --product <商品> --pack r
 **只能用图表工具**，只传参数，不要自己写画图代码，也不要传数字：
 
 ```bash
-python <SKILL>/scripts/run.py chart --pack report_pack.json --type dual_line --products S01 --metrics rating,refund_rate \
-    --mark-date 2026-09-12 --mark-text 差评集中 --title "差评出现后评分下滑、退款率翻倍"
+python <SKILL>/scripts/run.py chart --pack report_pack.json --type dual_line --products <商品编号> --metrics rating,refund_rate \
+    --mark-date <YYYY-MM-DD> --mark-text 差评集中 --title "差评出现后评分下滑、退款率翻倍"
 ```
 
 工具返回 `chart_id` 和数据摘要：把 `[图表:chart_id]` 写进正文，按摘要写解读。返回 `error` 时按说明改参数重试。图表类型和参数见 `references/chart_library.md`。补充图画了就会留在数据包里；画错了不想要，正文里不引用它即可，或者重新运行第 1 步生成数据包再画。
@@ -43,7 +51,7 @@ python <SKILL>/scripts/run.py chart --pack report_pack.json --type dual_line --p
 ## 4. 核对数字，导出 HTML
 
 ```bash
-python <SKILL>/scripts/run.py render report.md --pack report_pack.json --out 周报_0914-0920.html
+python <SKILL>/scripts/run.py render report.md --pack report_pack.json --out 周报_<起止日期>.html
 ```
 
 - 核对范围是数据包、图表摘要，以及本次对话里其他命令（`query`、`diagnose`、`stock` 等）的结果；商品名里的数字不算。`unmatched_numbers` 不为空时，把这些数字改为引用计算结果里的数，再运行一次，直到为空。

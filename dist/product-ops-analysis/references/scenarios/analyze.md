@@ -9,7 +9,7 @@
 **方式 1：一次拿到全部证据（推荐）**
 
 ```bash
-python <SKILL>/scripts/run.py diagnose --product 坚果中秋礼盒
+python <SKILL>/scripts/run.py diagnose --product <商品名称或编号>
 ```
 
 输出里有每一步的计算结果，以及一份规则初判（`rule_based_result`）。你在这个基础上审核、补充判断，再写结论。

@@ -214,6 +214,14 @@ def _standard_inputs(inputs, out_dir):
     return inputs
 
 
+def scan_cards(ds, **kw) -> list[dict]:
+    """预警卡：和平台一样带上严重程度的中文标签（红 / 黄 / 蓝）。"""
+    cards = alerts.scan(ds, **kw)
+    for c in cards:
+        c.setdefault("severity_name", alerts.SEV_NAME.get(c["severity"]))
+    return cards
+
+
 def resolve_pid(ds, s: str) -> str:
     """商品可以写编号，也可以写名称（或名称里的关键词），必须唯一。"""
     if s in set(ds.product_ids()):
@@ -418,7 +426,7 @@ def dispatch(ds, args):
         t = tiering.compute(ds)
         return out([dict(product_id=k, product_name=ds.product(k)["product_name"], **v) for k, v in t.items()])
     if args.cmd == "scan":
-        cards = alerts.scan(ds, days=args.days)
+        cards = scan_cards(ds, days=args.days)
         return out(dict(as_of=ds.as_of.strftime("%Y-%m-%d"), category_profile=ds.profile.get("name"),
                         profile_matched=ds.profile.get("matched"), cards=cards))
     if args.cmd == "tool":
@@ -429,11 +437,11 @@ def dispatch(ds, args):
             kw["cause"] = args.cause
         if args.name in ("decompose_gmv", "breakdown_channels", "breakdown_variants", "check_factors", "plan_actions"):
             kw["window"] = args.window
-        card = next((c for c in alerts.scan(ds) if c["product_id"] == args.product and c["is_today"]), None) \
+        card = next((c for c in scan_cards(ds) if c["product_id"] == args.product and c["is_today"]), None) \
             if args.name == "get_context" else None
         return out(tools.call(ds, args.name, kw, card=card))
     if args.cmd == "diagnose":
-        card = next((c for c in alerts.scan(ds) if c["product_id"] == args.product and c["is_today"]), None)
+        card = next((c for c in scan_cards(ds) if c["product_id"] == args.product and c["is_today"]), None)
         steps, res = sop.run(ds, args.product, card=card, tiers=tiering.compute(ds))
         return out(dict(note="以下为按 SOP 计算的证据与规则初判；请据此撰写结论，数字只能引用这里的结果，方案只能从 plans 中选择",
                         card=card, steps=[dict(tool=s["tool"], summary=s["summary"], result=s["result"]) for s in steps],
@@ -447,7 +455,7 @@ def dispatch(ds, args):
         allowed = set()
         from core import verify_numbers as vn
         if args.product:
-            card = next((c for c in alerts.scan(ds) if c["product_id"] == args.product and c["is_today"]), None)
+            card = next((c for c in scan_cards(ds) if c["product_id"] == args.product and c["is_today"]), None)
             steps, res = sop.run(ds, args.product, card=card)
             for s in steps:
                 vn.collect(s["result"], allowed)
@@ -469,7 +477,7 @@ def report_cmd(ds, args):
     from core import charts as C
     from core.reports import campaign as RC, product as RP, weekly as RW
     from core.reports.common import default, for_llm
-    cards = alerts.scan(ds)
+    cards = scan_cards(ds)
     mod = {"weekly": RW, "campaign": RC, "product": RP}[args.scene]
     if args.scene == "weekly":
         pack, book = RW.build(ds, cards, [], None, week_end=args.week_end, target=args.target)
@@ -485,12 +493,6 @@ def report_cmd(ds, args):
         card = next((c for c in cards if c["product_id"] == args.product and c["is_today"]), None)
         pack, book = RP.build(ds, args.product, card=card)
     pack.pop("diagnosis", None)
-    from core.reports.common import CN
-    i = 0
-    for ch in pack["chapters"]:                 # 没有数据的章节不显示，编号顺延，避免「六」之后直接跳到「八」
-        if ch["show"]:
-            ch["heading"] = f"{CN[i]}、{ch['title']}"
-            i += 1
     saved = dict(scene=args.scene, pack=pack, book=book.dump())
     Path(args.pack).write_text(json.dumps(saved, ensure_ascii=False, default=default), encoding="utf-8")
     if args.draft:

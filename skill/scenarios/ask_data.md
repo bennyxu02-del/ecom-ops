@@ -32,12 +32,12 @@
 | 涨幅最大的商品（按百分比） | `query --metrics gmv --by product --sort-by change --top 5` |
 | GMV 最高的 10 个商品和占比 | `query --metrics gmv --by product --top 10`（`share` 为占比） |
 | 各品类 / 子品类 / 商品层级的表现 | `query --metrics gmv,cvr --by category`（或 `sub_category`、`tier`） |
-| 某商品的访客从哪来 | `query --metrics uv --by channel --products 充电宝` |
-| 某商品各规格卖得怎么样 | `query --metrics units,gmv --by variant --products 充电宝` |
+| 某商品的访客从哪来 | `query --metrics uv --by channel --products <商品>` |
+| 某商品各规格卖得怎么样 | `query --metrics units,gmv --by variant --products <商品>` |
 | 近 8 周 GMV 走势 | `query --metrics gmv --by week --days 56` |
-| 某商品的到手价、竞品价、评分、毛利率 | `query --metrics price,comp_price,price_index,rating,margin --by product --products 充电宝` |
-| 某个品类的数据 | 任何查询加 `--category 蓝牙耳机` |
-| 有哪些商品、某商品叫什么 | `products`，或 `products --keyword 坚果` |
+| 某商品的到手价、竞品价、评分、毛利率 | `query --metrics price,comp_price,price_index,rating,margin --by product --products <商品>` |
+| 某个品类的数据 | 任何查询加 `--category <品类或子品类>` |
+| 有哪些商品、某商品叫什么 | `products`，或 `products --keyword <关键词>` |
 
 「跌得最多」没说按金额还是百分比时，默认按金额（`--sort-by diff`）；两种排法结果差别大时，一句话补充另一种的结果。
 
@@ -69,7 +69,7 @@
 - 第一句给结论，格式如：「上周（X 月 X 日至 X 日）GMV XX 万元，比前一周少 X 万元，下降 X%。」
 - 排行、分组用小表格：商品、本期、对比期、变化、占比，最多 10 行。用户要全部明细时，把完整结果另存成表格文件交付。
 - 金额变化看 `diff`，百分比变化看 `change`，占全部的比例看 `share`，占整体变化的比例看 `diff_share`（例如「这个商品少卖的金额占全店下滑的 70%」）。
-- 比率类指标写百分点，百分点取 `diff`：「转化率从 4.58% 降到 4.46%，下降 0.12 个百分点」。
+- 比率类指标写百分点，百分点取 `diff`：「转化率从 5.20% 降到 4.95%，下降 0.25 个百分点」。
 - 有明显异常的商品，结尾提一句「要不要看看它为什么跌了？」。
 
 ## 做不了的
