@@ -27,8 +27,9 @@ def render_product_report(d, res, card):
             L.append(f"- 测算：单件毛利 {est['unit_margin_before']:g} → {est['unit_margin_after']:g} 元，毛利率 {est['margin_rate_after']:.0%}，保本需销量提升 {est['breakeven_lift']:.0%}")
         elif est.get("daily_gmv_recoverable"):
             L.append(f"- 测算：恢复后每天可挽回 GMV 约 {est['daily_gmv_recoverable']:,.0f} 元")
-        if pl.get("approval_reasons"):
-            L.append(f"- 需审批：{'；'.join(pl['approval_reasons'])}")
+        risk = pl.get("risk_notes") or pl.get("approval_reasons")
+        if risk:
+            L.append(f"- 风险提示：{'；'.join(risk)}")
         L += ["- 执行步骤："] + [f"  {j}. {s}" for j, s in enumerate(pl["steps"], 1)]
         L.append(f"- 风险：{'；'.join(pl['risks'])}")
         if pl.get("rationale"):

@@ -26,12 +26,34 @@ CREATE TABLE IF NOT EXISTS handoffs (id INTEGER PRIMARY KEY AUTOINCREMENT, ds TE
   kind TEXT, role TEXT, assignee TEXT, steps_json TEXT, message TEXT, status TEXT, channel TEXT, due TEXT, note TEXT,
   history_json TEXT, ext_id TEXT, sent_at REAL, updated_at REAL, created_at REAL);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS rejections (id INTEGER PRIMARY KEY AUTOINCREMENT, ds TEXT, product_id TEXT, card_id TEXT,
+  action_id TEXT, cause TEXT, name TEXT, reason TEXT, created_at REAL);
 """
 
 # 旧库升级：补列
 MIGRATIONS = [("actions", "step_done", "TEXT"), ("actions", "context_json", "TEXT"), ("actions", "due_date", "TEXT"),
               ("actions", "note", "TEXT"), ("actions", "source", "TEXT"), ("actions", "log_json", "TEXT"),
-              ("handoffs", "reminded_at", "REAL"), ("handoffs", "remind_count", "INTEGER"), ("handoffs", "auto_reminds", "INTEGER")]
+              ("handoffs", "reminded_at", "REAL"), ("handoffs", "remind_count", "INTEGER"), ("handoffs", "auto_reminds", "INTEGER"),
+              ("actions", "outcome", "TEXT"), ("actions", "review_note", "TEXT"), ("actions", "closed_date", "TEXT"),
+              ("actions", "track_days", "INTEGER"), ("actions", "early_end", "INTEGER"), ("actions", "cancel_reason", "TEXT")]
+
+# v9 起：待办只有 doing / tracking / review / done / cancelled；协同只有 pending / notified / question / done / cancelled
+_OLD_ACTION = {"adopted": "doing", "transferred": "doing", "declined": "doing", "executed": "tracking"}
+_OLD_HANDOFF = {"draft": "pending", "sent": "notified", "received": "notified", "approved": "done", "declined": "cancelled"}
+
+
+def _migrate(c: sqlite3.Connection):
+    """旧状态迁移到 v9：驳回的方案移入驳回记录；审批事项删除；其余状态按映射改名。"""
+    for r in c.execute("SELECT * FROM actions WHERE status='rejected'").fetchall():
+        c.execute("INSERT INTO rejections(ds,product_id,card_id,action_id,cause,name,reason,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                  (r["ds"], r["product_id"], r["card_id"], r["action_id"], r["cause"], r["name"], r["reject_reason"], r["created_at"]))
+        c.execute("DELETE FROM handoffs WHERE action_row=?", (r["id"],))
+        c.execute("DELETE FROM actions WHERE id=?", (r["id"],))
+    c.execute("DELETE FROM handoffs WHERE kind='approval'")
+    for old, new in _OLD_ACTION.items():
+        c.execute("UPDATE actions SET status=? WHERE status=?", (new, old))
+    for old, new in _OLD_HANDOFF.items():
+        c.execute("UPDATE handoffs SET status=? WHERE status=?", (new, old))
 
 
 def conn() -> sqlite3.Connection:
@@ -53,6 +75,7 @@ def db() -> sqlite3.Connection:
             cols = {r[1] for r in _C.execute(f"PRAGMA table_info({table})").fetchall()}
             if col not in cols:
                 _C.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        _migrate(_C)
         _C.commit()
     return _C
 
@@ -104,7 +127,24 @@ def get_action(aid: int):
     return r[0] if r else None
 
 
-# ---------------- 协同事项（转交 / 审批） ----------------
+# ---------------- 驳回的 AI 方案 ----------------
+def add_rejection(**kw) -> int:
+    kw.setdefault("created_at", time.time())
+    cols = ",".join(kw)
+    return x(f"INSERT INTO rejections({cols}) VALUES({','.join('?' * len(kw))})", tuple(kw.values()))
+
+
+def list_rejections(ds: str, product_id: str | None = None) -> list[dict]:
+    if product_id:
+        return q("SELECT * FROM rejections WHERE ds=? AND product_id=? ORDER BY id DESC", (ds, product_id))
+    return q("SELECT * FROM rejections WHERE ds=? ORDER BY id DESC", (ds,))
+
+
+def delete_rejection(rid: int):
+    x("DELETE FROM rejections WHERE id=?", (rid,))
+
+
+# ---------------- 协同事项（分给同事的步骤） ----------------
 def add_handoff(**kw) -> int:
     now = time.time()
     kw.setdefault("created_at", now)
@@ -202,7 +242,7 @@ def cache_del(key: str):
 # ---------------- 重置 ----------------
 def reset(seed_fn=None):
     with _lock:
-        for t in ("alert_state", "actions", "reports", "focus_override", "handoffs"):
+        for t in ("alert_state", "actions", "reports", "focus_override", "handoffs", "rejections"):
             db().execute(f"DELETE FROM {t}")
         db().commit()
     if seed_fn:

@@ -4,10 +4,9 @@ import { api } from "../api";
 import { Loading, useLoad } from "../hooks";
 
 const ROLE_DESC: Record<string, string> = {
-  "我": "发起人（商品运营），接收协同进展通知",
+  "我": "发起人（商品运营），接收同事的进展和疑问通知",
   "供应链": "补货、到货确认、批次质量排查",
   "投放运营": "投放预算、推广计划调整",
-  "商品主管": "审批超出权限的方案（如大幅降价）",
 };
 
 /** 集成：飞书连接状态、角色与飞书成员的对应关系 */
@@ -59,7 +58,7 @@ export default function Integrations() {
 
   return (
     <>
-      <div className="page-head"><div><h1>集成</h1><div className="sub">把协同请求、审批和进展通知直接发到同事的飞书</div></div></div>
+      <div className="page-head"><div><h1>集成</h1><div className="sub">把分给同事的步骤推送到对方飞书，对方的处理同步回平台</div></div></div>
       <Card title="飞书" extra={s.ready && <Button size="small" onClick={testCard}>发送测试卡片</Button>}>
         <Descriptions size="small" column={{ xs: 1, md: 3 }} items={[
           { key: "c", label: "连接状态", children: conn },

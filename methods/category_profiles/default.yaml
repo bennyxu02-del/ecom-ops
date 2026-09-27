@@ -23,7 +23,10 @@ seasonality_note: 无
 # 经营约束：决定方案能否在企业内执行。演示为示例值，落地时按公司规则设置。
 constraints:
   margin_floor: 0.25         # 毛利底线：价格类方案执行后毛利率不得低于此值
-  price_authority: 0.10      # 运营自主调价权限：单次到手价降幅上限，超出需审批
-  min_price_window: 90       # 最低价保护：到手价低于近 N 天最低成交价（含大促价）时需审批，避免破价
+  price_authority: 0.10      # 运营自主调价权限：单次到手价降幅上限，超出时方案给出风险提示
+  min_price_window: 90       # 最低价保护：到手价低于近 N 天最低成交价（含大促价）时提示破价风险
   safety_days: 7             # 安全库存天数
   campaign_signup_lead: 7    # 活动需提前报名的天数
+
+# 复盘：跟踪指标朝目标方向变化达到该幅度，建议判定为「有效」
+review_threshold: 0.03

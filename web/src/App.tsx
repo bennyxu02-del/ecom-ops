@@ -7,7 +7,7 @@ import Overview from "./pages/Overview";
 import Products from "./pages/Products";
 import ProductDetail from "./pages/ProductDetail";
 import Alerts from "./pages/Alerts";
-import Actions from "./pages/Actions";
+import Actions, { mineCount } from "./pages/Actions";
 import Reports from "./pages/Reports";
 import ReportView from "./pages/ReportView";
 import Methods from "./pages/Methods";
@@ -57,7 +57,7 @@ function Shell() {
 
   const refreshMeta = useCallback(() => {
     api<any[]>("/api/alerts?today=true&status=pending,processing").then(a => setAlertCount(a.length)).catch(() => {});
-    api<any[]>("/api/handoffs").then(hs => setCollabCount(hs.filter(h => ["draft", "question"].includes(h.status)).length)).catch(() => {});
+    api<any[]>("/api/actions").then(xs => setCollabCount(mineCount(xs))).catch(() => {});
   }, []);
 
   useEffect(() => { api<Dataset[]>("/api/datasets").then(setDatasets); }, []);
@@ -85,7 +85,7 @@ function Shell() {
             key: n.key, icon: n.icon,
             label: (n.key === "alerts" && alertCount) || (n.key === "actions" && collabCount)
               ? <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>{n.label}
-                  <Badge count={n.key === "alerts" ? alertCount : collabCount} size="small" color={n.key === "actions" ? "#fab219" : undefined} /></span>
+                  <Badge count={n.key === "alerts" ? alertCount : collabCount} size="small" color={n.key === "actions" ? "#2a78d6" : undefined} /></span>
               : n.label,
           }))} />
       </nav>
@@ -113,7 +113,7 @@ function Shell() {
 
 function Root() {
   const loc = useLocation();
-  // 协同方处理页（从飞书卡片或转交单链接打开）不带导航框架
+  // 协同方处理页（从飞书卡片或协同链接打开）不带导航框架
   if (loc.pathname.startsWith("/h/")) return <Routes><Route path="/h/:hid" element={<HandoffView />} /></Routes>;
   return <Shell />;
 }

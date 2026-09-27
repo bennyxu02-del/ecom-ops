@@ -37,7 +37,7 @@ from server import feishu, state  # noqa: E402
 
 PORT = os.environ.get("PORT", "8000")
 LOCAL = f"http://127.0.0.1:{PORT}"
-NAMES = {"received": "已收到", "done": "已完成", "approved": "已批准", "declined": "已驳回"}
+NAMES = {"done": "已完成", "question": "有疑问"}
 
 
 def _post(path: str, body: dict) -> dict:

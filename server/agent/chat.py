@@ -40,10 +40,11 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
     try:
         if mode == "mock":
             text = f"（模拟模型）已收到：{history[-1]['content'][:60]}"
-            if not preset and re.search(r"怎么|建议|要不要|安排|如何", history[-1]["content"]):
+            if not preset and re.search(r"怎么|建议|要不要|安排|如何|待办|记一下", history[-1]["content"]):
                 text += ("\n\n建议先和供应链确认到货时间，再在详情页加一句到货提示。\n"
                          '<todo>{"name": "确认到货并更新提示", "steps": [{"text": "确认白色款能否提前到货", "by": "供应链"}, '
-                         '{"text": "详情页首屏加到货时间提示", "by": "我"}], "track_metric": "cvr", "due_days": 2}</todo>')
+                         '{"text": "详情页首屏加到货时间提示", "by": "我"}], "track_metric": "cvr", "track_days": 7, '
+                         '"note": "白色断货拖累转化率"}</todo>')
         else:
             for _ in range(MAX_CALLS + 1):
                 msg = chat(msgs, tools=tools.TOOL_SPECS)

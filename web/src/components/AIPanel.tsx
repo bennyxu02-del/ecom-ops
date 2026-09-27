@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { App, Button, Card, Input, Spin, Tag } from "antd";
+import { App, Button, Card, Input, Space, Spin, Tag } from "antd";
 import { CheckCircleFilled, CheckOutlined, DownOutlined, PlusCircleOutlined, FileTextOutlined, ReloadOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
 import { Link, useNavigate } from "react-router-dom";
 import { api, sse } from "../api";
@@ -8,11 +8,10 @@ import AnalysisPath from "./AnalysisPath";
 import Markdown from "./Markdown";
 import PlanCard from "./PlanCard";
 import ReasonModal, { ReasonSpec } from "./ReasonModal";
-import TodoModal, { TodoDraft, notifiedText } from "./TodoModal";
-import NotifyConfirm, { NotifyItem } from "./NotifyConfirm";
+import TodoModal, { TodoDraft } from "./TodoModal";
 
 type Step = { text: string; done: boolean };
-type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[]; preset?: boolean; done?: boolean; noai?: boolean; todo?: TodoDraft | null; created?: any; drafting?: boolean; q?: string };
+type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[]; preset?: boolean; done?: boolean; noai?: boolean; todo?: TodoDraft | null; created?: any; drafting?: boolean; q?: string; dismissed?: boolean };
 
 function StepList({ steps, running }: { steps: Step[]; running: boolean }) {
   return (
@@ -39,7 +38,8 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [showSteps, setShowSteps] = useState(false);
-  const [adopt, setAdopt] = useState<{ body: any; items: NotifyItem[] } | null>(null);
+  const [adoptPlan, setAdoptPlan] = useState<any>(null);
+  const [rejs, setRejs] = useState<Record<string, any>>({});
   const [todoFor, setTodoFor] = useState<{ idx: number; draft: TodoDraft; context: any } | null>(null);
   const [modal, setModal] = useState<{ spec: ReasonSpec; resolve: (v: { option: string; text: string } | null) => void } | null>(null);
   const history = useRef<{ role: string; content: string }[]>([]);
@@ -50,8 +50,12 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
   const nav = useNavigate();
 
   const loadActs = useCallback(async () => {
-    const xs = await api<any[]>(`/api/actions?product_id=${pid}`);
-    setActs(Object.fromEntries(xs.map(a => [a.action_id, a])));
+    const [xs, rs] = await Promise.all([api<any[]>(`/api/actions?product_id=${pid}`), api<any[]>(`/api/rejections?product_id=${pid}`)]);
+    // 每个方案对应最近一条未取消的待办 / 最近一条驳回记录（接口按时间倒序）
+    const am: Record<string, any> = {}, rm: Record<string, any> = {};
+    xs.filter(a => a.status !== "cancelled").forEach(a => { if (!am[a.action_id]) am[a.action_id] = a; });
+    rs.forEach(r => { if (!rm[r.action_id]) rm[r.action_id] = r; });
+    setActs(am); setRejs(rm);
   }, [pid]);
 
   const run = useCallback(async (refresh: boolean) => {
@@ -79,31 +83,19 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
 
   const ask = (spec: ReasonSpec) => new Promise<{ option: string; text: string } | null>(resolve => setModal({ spec, resolve }));
 
-  const decide = async (plan: any, decision: "adopt" | "reject") => {
-    const body: any = { plan, product_id: pid, card_id: card ? card.id : null, decision };
-    if (decision === "reject") {
-      const m = await ask({ title: "驳回方案", options: ["方案不适用当前情况", "已有其他处理方式", "成本过高", "其他"], input: true, placeholder: "补充说明（可选）", okText: "确认驳回" });
-      if (!m) return;
-      body.reason = m.option + (m.text ? "：" + m.text : "");
-    } else {
-      // 转交单要用到的诊断结论与证据（只取与该方案同一原因的证据）
-      const causes = (result?.root_causes || []).filter((c: any) => c.cause === plan.cause || c.cause_name === plan.cause_name);
-      body.context = { summary: result?.summary, evidence: (causes.length ? causes : result?.root_causes || []).flatMap((c: any) => c.evidence.map((e: any) => e.text)) };
-    }
-    if (decision === "adopt") {
-      const items = await api<NotifyItem[]>("/api/actions/preview", { method: "POST", body: { plan, product_id: pid, context: body.context } });
-      if (items.length) { setAdopt({ body, items }); return; }
-    }
-    await submit(body, false);
+  const adoptContext = (plan: any) => {
+    // 协同卡片里的背景：诊断结论 + 与该方案同一原因的证据
+    const causes = (result?.root_causes || []).filter((c: any) => c.cause === plan.cause || c.cause_name === plan.cause_name);
+    return { summary: result?.summary, evidence: (causes.length ? causes : result?.root_causes || []).flatMap((c: any) => c.evidence.map((e: any) => e.text)) };
   };
-
-  const submit = async (body: any, notify: boolean) => {
-    const r = await api<any>("/api/actions", { method: "POST", body: { ...body, notify } });
-    const total = (body.plan.handoffs || []).length;
-    message.success(body.decision === "reject" ? "已驳回" : notifiedText(r.notified, total, notify).replace("已保存待办", "已采纳").replace("已保存", "已采纳"));
-    setAdopt(null);
-    loadActs(); refreshMeta();
+  const reject = async (plan: any) => {
+    const m = await ask({ title: "驳回方案", options: ["方案不适用当前情况", "已有其他处理方式", "成本过高", "其他"], input: true, placeholder: "补充说明（可选）", okText: "确认驳回" });
+    if (!m) return;
+    await api("/api/rejections", { method: "POST", body: { product_id: pid, plan, card_id: card ? card.id : null, reason: m.option + (m.text ? "：" + m.text : "") } });
+    message.success("已驳回，不会生成待办");
+    loadActs();
   };
+  const undoReject = async (r: any) => { await api(`/api/rejections/${r.id}`, { method: "DELETE" }); loadActs(); };
 
   const chat = async (text: string | null, preset?: string, plan?: any, label?: string) => {
     if (busy) return;
@@ -199,7 +191,8 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
             <div className="ai-col">
               {r.plans.length > 0 && <div className="sec-title" style={{ marginTop: 0 }}>动作方案 <span className="muted small" style={{ fontWeight: 400 }}>来自动作库，参数按本商品数据计算，已检查经营约束</span></div>}
               {r.plans.map((p: any, k: number) => (
-                <PlanCard key={p.action_id + k} p={p} i={k} act={acts[p.action_id]} onDecide={decide} onChanged={() => { loadActs(); refreshMeta(); }} onMaterial={(pr, pl, lb) => chat(null, pr, pl, lb)} />
+                <PlanCard key={p.action_id + k} p={p} i={k} act={acts[p.action_id]} rej={rejs[p.action_id]}
+              onAdopt={setAdoptPlan} onReject={reject} onUndoReject={undoReject} onMaterial={(pr, pl, lb) => chat(null, pr, pl, lb)} />
               ))}
               {r.plans.length === 0 && <div className="muted small">没有需要执行的方案。</div>}
               <div className="chat">
@@ -214,11 +207,13 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
                           {m.unmatched && m.unmatched.length > 0 && <div className="small" style={{ color: "#7a5000", marginTop: 4 }}>⚠ 未核对到的数字：{m.unmatched.join("、")}</div>}
                       {m.done && !m.noai && !m.preset && m.text && (m.created ? (
                         <div className="m-ops"><CheckCircleFilled style={{ color: "#0ca30c" }} />已加入待办「{m.created.name}」<Link to={`/actions?open=${m.created.id}`}>查看</Link></div>
-                      ) : m.todo ? (
+                      ) : m.todo && !m.dismissed ? (
                         <div className="todo-sug">
-                          <div className="h"><PlusCircleOutlined style={{ color: "#7c5cd6" }} />建议待办：{m.todo.name}</div>
+                          <div className="h"><PlusCircleOutlined style={{ color: "#7c5cd6" }} />待办：{m.todo.name}</div>
                           <ol>{(m.todo.steps || []).map((st, j) => <li key={j}><Tag bordered={false} color={st.by === "我" ? "blue" : "orange"} style={{ marginRight: 6 }}>{st.by}</Tag>{st.text}</li>)}</ol>
-                          <Button size="small" type="primary" onClick={() => toTodo(k)}>加入待办</Button>
+                          <div className="small muted" style={{ marginBottom: 6 }}>截止 {m.todo.due_date}{m.todo.due_is_default ? "（默认 3 天）" : ""} · 完成后 {m.todo.track_days} 天看{({ gmv: "GMV", cvr: "支付转化率", uv: "访客数", aov: "客单价", units: "销量", rating: "评分" } as any)[m.todo.track_metric || "gmv"]}</div>
+                          <Space size={6}><Button size="small" type="primary" onClick={() => toTodo(k)}>创建</Button>
+                            <Button size="small" onClick={() => setMsg(k, x => ({ ...x, dismissed: true }))}>忽略</Button></Space>
                         </div>
                       ) : (
                         <div className="m-ops"><Button size="small" type="link" style={{ padding: 0 }} icon={<PlusCircleOutlined />} loading={m.drafting} onClick={() => toTodo(k)}>转为待办</Button></div>
@@ -240,8 +235,9 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
       <TodoModal open={!!todoFor} source="chat" productId={pid} draft={todoFor?.draft} context={todoFor?.context}
         onClose={() => setTodoFor(null)}
         onCreated={a => { if (todoFor) setMsg(todoFor.idx, x => ({ ...x, created: a })); setTodoFor(null); loadActs(); }} />
-      <NotifyConfirm items={adopt?.items || null} onCancel={() => setAdopt(null)}
-        onConfirm={async n => { try { await submit(adopt!.body, n); } catch (e: any) { message.error(e.message); } }} />
+      <TodoModal open={!!adoptPlan} source="diagnosis" productId={pid} plan={adoptPlan} cardId={card ? card.id : null}
+        context={adoptPlan ? adoptContext(adoptPlan) : null}
+        onClose={() => setAdoptPlan(null)} onCreated={() => { setAdoptPlan(null); loadActs(); refreshMeta(); }} />
       <ReasonModal spec={modal?.spec || null}
         onOk={(option, text) => { modal?.resolve({ option, text }); setModal(null); }}
         onCancel={() => { modal?.resolve(null); setModal(null); }} />

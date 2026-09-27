@@ -98,11 +98,20 @@ def weekly_pack(ds: Dataset, cards: list[dict], actions: list[dict], diagnoses: 
     sev_count = {"红": 0, "黄": 0, "蓝": 0}
     for c in week_cards:
         sev_count[config_sev(c["severity"])] += 1
-    effects = []
+    # 待办：本周完成（已复盘）的逐条列出；其余只统计数量
+    todos_done = []
     for a in actions:
-        if a.get("exec_date"):
-            e = effect(ds, a["product_id"], a.get("track_metric") or "gmv", a["exec_date"], variant=a.get("variant"))
-            effects.append(dict(product_name=a.get("product_name"), action=a["name"], exec_date=a["exec_date"], **e))
+        if a.get("stage") == "done" and a.get("closed_date") and wk_s <= a["closed_date"] <= wk_e:
+            e = effect(ds, a["product_id"], a.get("track_metric") or "gmv", a.get("exec_date"),
+                       n=int(a.get("track_days") or 5), variant=a.get("variant"))
+            todos_done.append(dict(product_name=a.get("product_name"), todo=a["name"], outcome=a.get("outcome_name"),
+                                   note=a.get("review_note"), metric=e.get("metric"), metric_name=e.get("metric_name"),
+                                   before=e.get("before"), after=e.get("after"), change_pct=e.get("change_pct")))
+    as_of_s = as_of.strftime("%Y-%m-%d")
+    open_ = [a for a in actions if a.get("stage") in ("doing", "tracking", "review")]
+    todo_counts = dict(doing=sum(a["stage"] == "doing" for a in open_), tracking=sum(a["stage"] == "tracking" for a in open_),
+                       review=sum(a["stage"] == "review" for a in open_),
+                       overdue=sum(a["stage"] == "doing" and bool(a.get("due_date")) and a["due_date"] < as_of_s for a in open_))
     next_focus = []
     for c in cards:
         if c["is_today"] and c.get("status") not in ("ignored",):
@@ -110,7 +119,7 @@ def weekly_pack(ds: Dataset, cards: list[dict], actions: list[dict], diagnoses: 
     return dict(dataset=ds.name, category=ds.profile.get("name"), period=f"{wk_s} 至 {wk_e}",
                 prev_period=f"{pwk[0]:%Y-%m-%d} 至 {pwk[1]:%Y-%m-%d}", focus_count=len(focus), core=core,
                 top_up=up, top_down=down, health_watch=risk, alerts=dict(count=sev_count, items=alert_rows),
-                effects=effects, next_week=next_focus)
+                todos_done=todos_done, todo_counts=todo_counts, next_week=next_focus)
 
 
 def config_sev(s):
@@ -151,18 +160,18 @@ def render_rules(pack: dict) -> str:
         acts = "；".join(f"{y['name']}（{y['status']}）" for y in x["actions"]) or "暂无动作"
         cause = "、".join(x["causes"]) if x["causes"] else "待诊断"
         lines.append(f"- 【{x['severity']}】{x['product_name']}：{'、'.join(x['rules'])} → 原因：{cause} → 方案：{acts}")
-    lines += ["", "## 五、动作效果", ""]
-    if pack["effects"]:
-        lines += ["| 商品 | 动作 | 执行日 | 跟踪指标 | 执行前 | 执行后 | 变化 |", "| --- | --- | --- | --- | --- | --- | --- |"]
-        for e in pack["effects"]:
-            fmt = (lambda v: f"{v:.2%}") if e["metric"] == "cvr" else (lambda v: f"{v:,.1f}")
-            if e["status"] == "已完成":
-                lines.append(f"| {e['product_name']} | {e['action']} | {e['exec_date']} | {e['metric_name']} | {fmt(e['before'])} | {fmt(e['after'])} | {p(e['change_pct'])} |")
-            else:
-                lines.append(f"| {e['product_name']} | {e['action']} | {e['exec_date']} | {e['metric_name']} | — | — | {e['status']} |")
+    lines += ["", "## 五、本周完成的待办", ""]
+    if pack["todos_done"]:
+        lines += ["| 待办 | 商品 | 跟踪指标 | 执行前 → 后 | 结论 | 总结 |", "| --- | --- | --- | --- | --- | --- |"]
+        for t in pack["todos_done"]:
+            fmt = (lambda v: "—" if v is None else f"{v:.2%}") if t["metric"] == "cvr" else (lambda v: "—" if v is None else f"{v:,.1f}")
+            lines.append(f"| {t['todo']} | {t['product_name']} | {t['metric_name'] or '—'} | {fmt(t['before'])} → {fmt(t['after'])}"
+                         f"（{p(t['change_pct'])}） | {t['outcome'] or '—'} | {t['note'] or '—'} |")
         lines += ["", "注：执行前后对比，不等同于严格的因果效果。"]
     else:
-        lines.append("本周无已执行动作。")
+        lines.append("本周没有完成复盘的待办。")
+    k = pack["todo_counts"]
+    lines += ["", f"另有执行中 {k['doing']} 条（其中逾期 {k['overdue']} 条）、跟踪中 {k['tracking']} 条、待复盘 {k['review']} 条。"]
     lines += ["", "## 六、下周关注", ""]
     lines += [f"- 【{x['severity']}】{x['product_name']}：{'、'.join(x['rules'])}" for x in pack["next_week"]] or ["- 本周无"]
     return "\n".join(lines)

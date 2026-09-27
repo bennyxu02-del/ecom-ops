@@ -212,15 +212,34 @@ def methods(name):
 
 
 def seed():
-    """演示预置：案例 E（编织快充数据线）上周已执行的补货动作。"""
+    """演示预置：案例 E（编织快充数据线）上周采纳并完成的补货待办，跟踪期已满，演示开始时处于「待复盘」。"""
+    import json
+    import time
+    from core import actions as core_actions
     name = "3c"
     ds = ds_of(name)
     c = next((c for c in get(name)["base_cards"] if c["product_id"] == "P05"), None)
     if not c:
         return
     state.set_card(name, c["id"], "done")
-    state.add_action(ds=name, card_id=c["id"], product_id="P05", product_name=ds.product("P05")["product_name"],
-                     action_id="replenish", name="紧急补货", cause="stockout", cause_name="规格断货",
-                     target="编织快充数据线 · 1m 白色", plan_json="{}", exec_type="转交", owner_role="供应链",
-                     status="executed", track_metric="cvr", variant="1m 白色", adopted_date="2026-09-13",
-                     exec_date="2026-09-14")
+    plan = core_actions.annotate(dict(
+        action_id="replenish", name="紧急补货", cause="stockout", cause_name="规格断货",
+        target="编织快充数据线 · 1m 白色", params=dict(variant="1m 白色"),
+        steps=["确认 1m 白色补货量，安排 9 月 14 日前到货", "到货后恢复 1m 白色的正常售卖与投放"],
+        step_owners=["供应链", "我"], track=dict(metric="cvr", metric_name="支付转化率", days=5), source="diagnosis"))
+    t0 = time.time() - 6 * 86400
+    log = [dict(t=t0, by="我", text="采纳 AI 诊断方案"),
+           dict(t=t0 + 3600, by="系统", text="供应链 已完成"),
+           dict(t=t0 + 7200, by="系统", text="所有步骤完成，开始跟踪效果（5 天）")]
+    aid = state.add_action(ds=name, card_id=c["id"], product_id="P05", product_name=ds.product("P05")["product_name"],
+                           action_id="replenish", name="紧急补货", cause="stockout", cause_name="规格断货",
+                           target=plan["target"], plan_json=json.dumps(plan, ensure_ascii=False), exec_type=plan["exec_type"],
+                           owner_role=plan["owner_role"], status="tracking", track_metric="cvr", track_days=5,
+                           variant="1m 白色", adopted_date="2026-09-13", exec_date="2026-09-14", due_date="2026-09-14",
+                           step_done=json.dumps([1]), source="diagnosis",
+                           context_json=json.dumps(dict(summary="1m 白色 9 月 13 日断货，转化率明显下滑"), ensure_ascii=False),
+                           log_json=json.dumps(log, ensure_ascii=False))
+    hist = [dict(t=t0, status="notified", by="我", note="飞书推送"), dict(t=t0 + 3600, status="done", by="供应链", note=None)]
+    state.add_handoff(ds=name, action_row=aid, product_id="P05", kind="transfer", role="供应链", assignee=None,
+                      steps_json=json.dumps([0]), message="【协同请求】编织快充数据线 · 紧急补货", status="done",
+                      channel="copy", due="2026-09-14", sent_at=t0, history_json=json.dumps(hist, ensure_ascii=False))

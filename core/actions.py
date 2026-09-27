@@ -462,8 +462,8 @@ def plan_actions(ds: Dataset, pid: str, cause: str, window: int = 7) -> dict:
                     steps.append(s.format(**fill))
                 except KeyError:
                     steps.append(s)
-        approval = res.get("approval") or []
-        exec_type = "需审批" if approval else a["exec_type"]
+        risk_notes = res.get("approval") or []          # 超出调价权限 / 可能破价：只提示，不拦截
+        exec_type = a["exec_type"]
         track = dict(a.get("track") or {})
         track["metric_name"] = METRIC_NAMES.get(track.get("metric"), track.get("metric"))
         candidates.append(dict(
@@ -471,7 +471,8 @@ def plan_actions(ds: Dataset, pid: str, cause: str, window: int = 7) -> dict:
             cause=cause, cause_name=config.cause_name(cause), target=res.get("target"),
             params=res.get("params", {}), params_text=res.get("params_text", []),
             estimate=res.get("estimate", {"type": "none"}), checks=res.get("checks", []),
-            exec_type=exec_type, approval_reasons=approval, owner_role=a["owner_role"], steps=steps,
+            exec_type=exec_type, risk_notes=risk_notes, owner_role=a["owner_role"], steps=steps,
+            due_days=a.get("due_days", 3),
             step_owners=_step_owners(a, steps, res.get("step_by")),
             track=track, risks=a.get("risks") or [], materials=a.get("materials") or [],
         ))
@@ -483,7 +484,6 @@ def plan_actions(ds: Dataset, pid: str, cause: str, window: int = 7) -> dict:
 
 
 SELF = "我"
-APPROVER = "商品主管"
 
 
 def _step_owners(a: dict, steps: list, override=None) -> list[str]:
@@ -499,31 +499,28 @@ def _step_owners(a: dict, steps: list, override=None) -> list[str]:
 
 
 def _relabel(plan: dict):
-    """执行类型与负责角色按实际步骤负责人重新标注（需审批优先）。"""
+    """执行类型与负责角色按实际步骤负责人重新标注。"""
     owners = plan.get("step_owners") or []
     others = list(dict.fromkeys(o for o in owners if o != SELF))
     mine = SELF in owners
-    if plan.get("exec_type") != "需审批":
-        plan["exec_type"] = "自己执行 + 转交" if (mine and others) else ("转交" if others else "自己执行")
+    plan["exec_type"] = "自己执行 + 转交" if (mine and others) else ("转交" if others else "自己执行")
     plan["owner_role"] = " / ".join((["商品运营"] if mine else []) + others) or plan.get("owner_role")
 
 
 def handoffs_of(plan: dict) -> list[dict]:
-    """需要别人参与的部分：审批（先于执行）+ 按角色归并的转交步骤。"""
-    out = []
-    if plan.get("approval_reasons"):
-        out.append(dict(kind="approval", role=APPROVER, steps=[], reasons=list(plan["approval_reasons"])))
+    """需要同事参与的部分：按角色归并的步骤（同一角色一张飞书卡片）。"""
     roles: dict[str, list[int]] = {}
     for i, who in enumerate(plan.get("step_owners") or []):
         if who != SELF:
             roles.setdefault(who, []).append(i)
-    for role, idx in roles.items():
-        out.append(dict(kind="transfer", role=role, steps=idx, reasons=[]))
-    return out
+    return [dict(kind="transfer", role=role, steps=idx) for role, idx in roles.items()]
 
 
 def annotate(plan: dict) -> dict:
     """为旧版本生成的方案（如缓存结果）补上步骤负责人与协同事项，幂等。"""
+    if plan.get("approval_reasons") and not plan.get("risk_notes"):
+        plan["risk_notes"] = plan.pop("approval_reasons")
+    plan.pop("approval_reasons", None)
     if not plan.get("step_owners") or len(plan["step_owners"]) != len(plan.get("steps") or []):
         a = next((x for x in config.action_library()["actions"] if x["id"] == plan.get("action_id")), None)
         steps = plan.get("steps") or []
@@ -532,6 +529,9 @@ def annotate(plan: dict) -> dict:
             override = [SELF, "供应链", SELF]
         plan["step_owners"] = _step_owners(a or {"exec_type": plan.get("exec_type", ""), "owner_role": plan.get("owner_role")},
                                            steps, override)
+        if a and "due_days" not in plan:
+            plan["due_days"] = a.get("due_days", 3)
+    plan["step_owners"] = [o if o in ("我", "供应链", "投放运营") else SELF for o in plan["step_owners"]]
     _relabel(plan)
     plan["handoffs"] = handoffs_of(plan)
     return plan

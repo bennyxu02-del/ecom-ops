@@ -242,3 +242,12 @@ textarea.editor { width: 100%; min-height: 560px; font: 13px/1.7 ui-monospace, S
 .nmsg { white-space: pre-wrap; word-break: break-all; font-family: inherit; font-size: 12.5px; color: var(--text-2); background: var(--surface-2); border-radius: 6px; padding: 8px 10px; margin: 0; max-height: 240px; overflow: auto; }
 .view-tabs { margin-bottom: 12px; }
 .collab-row + .collab-row { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 2px; }
+
+/* v9 待办 */
+.verify.warn { background: var(--warn-weak); color: #7a5000; }
+.plan.rejected { opacity: .72; }
+.filter-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; }
+.filter-chips .ant-tag-checkable { font-size: 13px; padding: 2px 10px; border-radius: 6px; margin: 0; }
+.stage-box { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface-2); display: grid; gap: 6px; justify-items: start; }
+.stage-box.review { border-color: #f0d58a; background: #fffaf0; }
+.so-ops { margin: 2px 0 6px 50px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

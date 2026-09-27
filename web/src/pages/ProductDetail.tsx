@@ -26,7 +26,7 @@ function Variants({ v }: { v: any }) {
 function Events({ d }: { d: any }) {
   const items = [
     ...d.events.map((e: any) => ({ date: e.date, txt: e.description + (e.future ? "（预计）" : ""), tag: "事件", color: "gray" })),
-    ...d.actions.map((a: any) => ({ date: a.exec_date || a.adopted_date || "", txt: `${a.name}（${a.status_name}）`, tag: "动作", color: "green" })),
+    ...d.actions.map((a: any) => ({ date: a.exec_date || a.adopted_date || "", txt: `${a.name}（${a.stage_name}${a.outcome_name ? " · " + a.outcome_name : ""}）`, tag: "待办", color: "green" })),
     ...(d.cards || []).map((c: any) => ({ date: c.first_date, txt: `${SEVN[c.severity]}色预警：${c.rule_names.join("、")}（${c.status_name}）`, tag: "预警", color: c.severity === "red" ? "red" : "orange" })),
   ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
   if (!items.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无" />;

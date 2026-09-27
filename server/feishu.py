@@ -15,7 +15,7 @@ import urllib.request
 from . import state
 
 API = os.environ.get("FEISHU_API", "https://open.feishu.cn/open-apis")
-ROLES = ["我", "供应链", "投放运营", "商品主管"]
+ROLES = ["我", "供应链", "投放运营"]
 _tok = {"v": None, "exp": 0.0}
 _lock = threading.Lock()
 
@@ -163,9 +163,8 @@ def callback_online() -> bool:
 # ---------------------------------------------------------------------------
 # 卡片
 # ---------------------------------------------------------------------------
-STATUS_TEXT = {"sent": "待处理", "received": "已收到，处理中", "done": "已完成", "question": "有疑问，等待回复",
-               "approved": "已批准", "declined": "已驳回", "cancelled": "已取消，无需处理"}
-TEMPLATE = {"transfer": "orange", "approval": "blue"}
+STATUS_TEXT = {"notified": "待处理", "question": "有疑问，等待发起人回复", "done": "已完成",
+               "cancelled": "已取消，无需处理", "pending": "未发出"}
 
 
 def _md(s: str) -> str:
@@ -173,40 +172,30 @@ def _md(s: str) -> str:
 
 
 def build_card(h: dict, link: str | None) -> dict:
-    """h：decorate_handoff(with_context=True) 的结果。"""
-    approval = h["kind"] == "approval"
+    """h：decorate_handoff(with_context=True) 的结果。按钮只有「已完成」和「有疑问」。"""
     a = h.get("action") or {}
-    closed = h["status"] in ("done", "approved", "declined", "cancelled")
+    closed = h["status"] in ("done", "cancelled")
     body = h.get("message") or ""
-    # 正文去掉标题行和处理入口（卡片自带）
     lines = [x for x in body.split("\n") if not x.startswith("处理入口：")]
     if lines and lines[0].startswith("【"):
         lines = lines[1:]
-    text = "\n".join(lines).strip()
-    elements = [{"tag": "div", "text": {"tag": "lark_md", "content": _md(text)}}]
-    status_line = f"**当前状态：{STATUS_TEXT.get(h['status'], h['status'])}**" + (f"　截止 {h['due']}" if h.get("due") and not closed else "")
-    if h.get("note"):
-        status_line += f"　{_md(h['note'])}"
-    elements += [{"tag": "hr"}, {"tag": "div", "text": {"tag": "lark_md", "content": status_line}}]
+    elements = [{"tag": "div", "text": {"tag": "lark_md", "content": _md("\n".join(lines).strip())}}]
+    status = "发起人已确认完成" if h.get("proxy") else STATUS_TEXT.get(h["status"], h["status"])
+    line = f"**当前状态：{status}**" + (f"　截止 {h['due']}" if h.get("due") and not closed else "")
+    if h.get("note") and h["status"] == "question":
+        line += f"\n你的疑问：{_md(h['note'])}"
+    elements += [{"tag": "hr"}, {"tag": "div", "text": {"tag": "lark_md", "content": line}}]
     actions = []
-    val = lambda st: {"hid": h["id"], "status": st}
     if not closed:
-        if approval:
-            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "批准"}, "type": "primary", "value": val("approved")})
-            if link:
-                actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "驳回（填写原因）"}, "type": "danger", "url": link})
-        else:
-            if h["status"] == "sent":
-                actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "已收到"}, "type": "default", "value": val("received")})
-            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "已完成"}, "type": "primary", "value": val("done")})
-            if link:
-                actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "有疑问 / 补充说明"}, "type": "default", "url": link})
+        actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "已完成"}, "type": "primary",
+                        "value": {"hid": h["id"], "status": "done"}})
+        if link:
+            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "有疑问"}, "type": "default", "url": link})
     elif link:
         actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "查看详情"}, "type": "default", "url": link})
     if actions:
         elements.append({"tag": "action", "actions": actions})
-    title = ("【审批申请】" if approval else "【协同请求】") + (a.get("product_name") or "")
+    template = "grey" if h["status"] == "cancelled" else "green" if closed else "orange"
     return {"config": {"wide_screen_mode": True, "update_multi": True},
-            "header": {"template": "grey" if h["status"] == "cancelled" else "green" if closed else TEMPLATE[h["kind"]],
-                       "title": {"tag": "plain_text", "content": title}},
+            "header": {"template": template, "title": {"tag": "plain_text", "content": "【协同请求】" + (a.get("product_name") or "")}},
             "elements": elements}

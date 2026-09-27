@@ -1,28 +1,50 @@
-"""待办：AI 诊断方案之外的待办（追问中产生的、运营手动新建的），以及待办的轻量编辑。
+"""待办（v9）：一条待办只走 4 步——执行中 → 跟踪中 → 待复盘 → 已完成，执行中可以取消。
 
-自定义待办与诊断方案共用同一套数据结构（actions 表 + plan），因此同样拆分我的步骤与协同事项、
-生成转交单、完成后自动跟踪效果、进入周报。自定义待办不走动作库的参数测算。
+- 三个入口（采纳 AI 方案 / 对话生成 / 手动新建）都走 create()，结构相同。
+- 分工 = 步骤的负责人：我的步骤我来勾；同事的步骤按角色归并成协同事项，推送飞书（collab / notify）。
+- 所有业务日期（截止、执行、跟踪、逾期）按业务日期 = 数据截止日计算。
 """
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 import re
 import threading
 
+import pandas as pd
+
 from core import actions as core_actions
-from core.weekly import METRIC_NAMES
+from core import tools
+from core.weekly import METRIC_NAMES, effect
 
 from . import collab, data, llm_client, state
 
-ROLES = ["我", "供应链", "投放运营", "商品主管"]
+ROLES = ["我", "供应链", "投放运营"]
 TRACK_METRICS = ["gmv", "cvr", "uv", "aov", "units", "rating", "uv_paid", "uv_search"]
-CAUSE_NAMES = {"chat": "追问发现", "manual": "临时事项"}
+STAGE_NAMES = {"doing": "执行中", "tracking": "跟踪中", "review": "待复盘", "done": "已完成", "cancelled": "已取消"}
+OUTCOMES = {"effective": "有效", "ineffective": "无效", "unknown": "无法判断"}
+SOURCE_NAMES = {"diagnosis": "AI 诊断", "chat": "对话", "manual": "手动新建"}
+CAUSE_NAMES = {"chat": "对话发现", "manual": "临时事项"}
 DEFAULT_DUE_DAYS = 3
+DEFAULT_TRACK_DAYS = 7
+INTERFERENCE = {"campaign_start": "活动开始", "campaign_end": "活动结束", "promo_day": "大促",
+                "price_change": "自家调价", "competitor_price_change": "竞品调价"}
+
+
+def today(name: str) -> str:
+    return data.ds_of(name).as_of.strftime("%Y-%m-%d")
 
 
 def default_due(name: str, days: int = DEFAULT_DUE_DAYS) -> str:
     return (data.ds_of(name).as_of + dt.timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def _loads(s, default):
+    try:
+        return json.loads(s) if s else default
+    except (TypeError, json.JSONDecodeError):
+        return default
 
 
 def _clean_steps(steps: list) -> list[dict]:
@@ -38,120 +60,259 @@ def _clean_steps(steps: list) -> list[dict]:
     return out
 
 
-def build_plan(name: str, pid: str, title: str, steps: list[dict], track_metric: str, source: str) -> dict:
+# ---------------------------------------------------------------------------
+# 创建（三个入口共用）
+# ---------------------------------------------------------------------------
+def build_plan(name: str, pid: str, title: str, steps: list, track_metric: str | None, track_days: int | None,
+               source: str, base: dict | None = None) -> dict:
     ds = data.ds_of(name)
     steps = _clean_steps(steps)
-    metric = track_metric if track_metric in METRIC_NAMES else "gmv"
-    plan = dict(action_id="custom", name=title.strip()[:60], cause="custom", cause_name=CAUSE_NAMES.get(source, "临时事项"),
-                target=ds.product(pid)["product_name"], steps=[s["text"] for s in steps],
-                step_owners=[s["by"] for s in steps], exec_type="", params_text=[], risks=[],
-                track=dict(metric=metric, metric_name=METRIC_NAMES[metric], days=5), source=source)
+    if base:
+        plan = core_actions.annotate(copy.deepcopy(base))
+        if steps:
+            plan["steps"] = [s["text"] for s in steps]
+            plan["step_owners"] = [s["by"] for s in steps]
+        track = dict(plan.get("track") or {})
+        track["days"] = int(track_days or track.get("days") or 5)
+        plan["track"] = track
+    else:
+        metric = track_metric if track_metric in METRIC_NAMES else "gmv"
+        plan = dict(action_id="custom", cause="custom", cause_name=CAUSE_NAMES.get(source, "临时事项"),
+                    target=ds.product(pid)["product_name"], steps=[s["text"] for s in steps],
+                    step_owners=[s["by"] for s in steps], params_text=[], risks=[],
+                    track=dict(metric=metric, metric_name=METRIC_NAMES[metric], days=int(track_days or DEFAULT_TRACK_DAYS)))
+    plan["name"] = (title or plan.get("name") or "").strip()[:60]
+    plan["source"] = source
     return core_actions.annotate(plan)
 
 
-def create(name: str, pid: str, title: str, steps: list, due_date: str | None, track_metric: str | None,
-           note: str | None, source: str, context: dict | None, base_url: str | None) -> int:
+def preview(name: str, pid: str, plan: dict, context: dict | None, due: str) -> list[dict]:
+    return collab.draft_handoffs(name, pid, plan, context or {}, due)
+
+
+def create(name: str, pid: str, *, title: str, steps: list, due_date: str | None = None, track_metric: str | None = None,
+           track_days: int | None = None, note: str | None = None, source: str = "manual", context: dict | None = None,
+           plan: dict | None = None, card_id: str | None = None, base_url: str | None = None) -> int:
     ds = data.ds_of(name)
     if pid not in ds.product_ids():
         raise ValueError("未知商品")
-    if not (title or "").strip():
+    if not (title or (plan or {}).get("name") or "").strip():
         raise ValueError("请填写待办名称")
-    if not _clean_steps(steps):
+    if not _clean_steps(steps) and not (plan or {}).get("steps"):
         raise ValueError("至少填写一个步骤")
-    plan = build_plan(name, pid, title, steps, track_metric or "gmv", source)
-    today = ds.as_of.strftime("%Y-%m-%d")
+    p = build_plan(name, pid, title, steps, track_metric, track_days, source, base=plan)
+    due = due_date or default_due(name, int(p.get("due_days") or DEFAULT_DUE_DAYS))
     ctx = dict(context or {})
     if not ctx.get("summary") and note:
         ctx["summary"] = note
-    aid = state.add_action(ds=name, card_id=None, product_id=pid, product_name=ds.product(pid)["product_name"],
-                           action_id="custom", name=plan["name"], cause="custom", cause_name=plan["cause_name"],
-                           target=plan["target"], plan_json=json.dumps(plan, ensure_ascii=False), exec_type=plan["exec_type"],
-                           owner_role=plan["owner_role"], status="adopted", track_metric=plan["track"]["metric"],
-                           variant=None, adopted_date=today, context_json=json.dumps(ctx, ensure_ascii=False),
-                           due_date=due_date or default_due(name), note=(note or "").strip() or None, source=source)
-    collab.create_for_action(name, aid, plan, ctx, base_url, due=due_date or default_due(name))
-    collab.add_log(aid, {"chat": "从 AI 追问创建待办", "manual": "手动新建待办"}.get(source, "创建待办"))
+    aid = state.add_action(ds=name, card_id=card_id, product_id=pid, product_name=ds.product(pid)["product_name"],
+                           action_id=p.get("action_id"), name=p["name"], cause=p.get("cause"), cause_name=p.get("cause_name"),
+                           target=p.get("target"), plan_json=json.dumps(p, ensure_ascii=False), exec_type=p.get("exec_type"),
+                           owner_role=p.get("owner_role"), status="doing", track_metric=p["track"].get("metric"),
+                           track_days=p["track"]["days"], variant=(p.get("params") or {}).get("variant"),
+                           adopted_date=today(name), context_json=json.dumps(ctx, ensure_ascii=False),
+                           due_date=due, note=(note or "").strip() or None, source=source)
+    collab.create_for_action(name, aid, pid, p, ctx, due, base_url)
+    collab.add_log(aid, {"diagnosis": "采纳 AI 诊断方案", "chat": "从 AI 对话创建", "manual": "手动新建"}.get(source, "创建待办"))
+    if card_id:
+        st = (state.card_states(name).get(card_id) or {}).get("status")
+        if st not in ("done", "ignored"):
+            state.set_card(name, card_id, "processing")
     return aid
 
 
 # ---------------------------------------------------------------------------
-# 轻量编辑：名称、截止日期、备注、状态
+# 阶段推进
 # ---------------------------------------------------------------------------
-STATUS_TEXT = {"executed": "标记为已执行", "cancelled": "取消待办", "adopted": "重新打开"}
+def refresh(name: str, aid: int):
+    """执行中：我的步骤全勾完 + 同事步骤全部完成 → 跟踪中（执行日期 = 今天）。"""
+    a = state.get_action(aid)
+    if not a or a["status"] != "doing":
+        return
+    if collab.progress(a, state.list_handoffs(action_row=aid))["complete"]:
+        state.update_action(aid, status="tracking", exec_date=today(name))
+        collab.add_log(aid, f"所有步骤完成，开始跟踪效果（{a.get('track_days') or DEFAULT_TRACK_DAYS} 天）", by="系统")
 
 
-def update(name: str, aid: int, *, title=None, due_date=None, note=None, status=None, exec_date=None, reason=None):
+def _effect(name: str, a: dict) -> dict:
+    return effect(data.ds_of(name), a["product_id"], a.get("track_metric") or "gmv", a.get("exec_date"),
+                  n=int(a.get("track_days") or DEFAULT_TRACK_DAYS), variant=a.get("variant"))
+
+
+def advance(name: str, a: dict) -> dict:
+    """跟踪中：跟踪天数的数据到齐 → 待复盘。"""
+    if a["status"] == "tracking" and a.get("exec_date") and _effect(name, a).get("status") == "已完成":
+        state.update_action(a["id"], status="review")
+        collab.add_log(a["id"], "跟踪期满，等待复盘", by="系统")
+        a = state.get_action(a["id"])
+    return a
+
+
+def end_tracking(name: str, aid: int):
+    a = state.get_action(aid)
+    if not a or a["status"] != "tracking":
+        raise ValueError("只有跟踪中的待办可以提前结束")
+    state.update_action(aid, status="review", early_end=1)
+    collab.add_log(aid, "提前结束跟踪")
+
+
+def _fmt(metric: str, v):
+    if v is None:
+        return "—"
+    return f"{v * 100:.2f}%" if metric == "cvr" else (f"{v:.2f}" if metric in ("aov", "rating") else f"{v:,.1f}")
+
+
+def suggestion(name: str, a: dict) -> dict:
+    """复盘建议：前后对比 + 干扰事件 → 有效 / 无效 / 无法判断，附一句总结草稿。"""
+    ds = data.ds_of(name)
+    n = int(a.get("track_days") or DEFAULT_TRACK_DAYS)
+    metric = a.get("track_metric") or "gmv"
+    e = _effect(name, a)
+    mname = e.get("metric_name") or METRIC_NAMES.get(metric, metric)
+    events = []
+    if a.get("exec_date"):
+        end = (pd.Timestamp(a["exec_date"]) + pd.Timedelta(days=n)).strftime("%Y-%m-%d")
+        ev = tools.get_events(ds, a["product_id"], a["exec_date"], end)["events"]
+        events = [dict(date=x["date"], description=x["description"], kind=INTERFERENCE[x["type"]])
+                  for x in ev if x["type"] in INTERFERENCE]
+    th = float(ds.profile.get("review_threshold", 0.03))
+    chg = e.get("change_pct")
+    if e.get("status") != "已完成":
+        outcome, why = "unknown", f"跟踪不满 {n} 天，数据不足以判断"
+    elif events:
+        outcome, why = "unknown", "跟踪期内有" + "、".join(f"{x['date'][5:]} {x['kind']}" for x in events) + "，结果可能受干扰"
+    elif chg is not None and chg >= th:
+        outcome, why = "effective", f"{mname}提升 {chg:.1%}，达到 {th:.0%} 的有效标准"
+    else:
+        outcome, why = "ineffective", f"{mname}变化 {chg:+.1%}，未达到 {th:.0%} 的有效标准" if chg is not None else "没有可比数据"
+    summary = (f"{mname} {_fmt(metric, e.get('before'))} → {_fmt(metric, e.get('after'))}"
+               + (f"（{chg:+.1%}）" if chg is not None and e.get("status") == "已完成" else "")) if e.get("before") is not None else ""
+    return dict(outcome=outcome, outcome_name=OUTCOMES[outcome], reason=why, summary=summary, metric=metric,
+                metric_name=mname, before=e.get("before"), after=e.get("after"), change_pct=chg, days=n,
+                days_observed=e.get("days_observed", n if e.get("status") == "已完成" else 0), events=events,
+                threshold=th)
+
+
+def review(name: str, aid: int, outcome: str, note: str | None = None):
+    a = state.get_action(aid)
+    if not a or a["status"] != "review":
+        raise ValueError("只有待复盘的待办可以复盘")
+    if outcome not in OUTCOMES:
+        raise ValueError("请选择复盘结论")
+    state.update_action(aid, status="done", outcome=outcome, review_note=(note or "").strip() or None,
+                        closed_date=today(name))
+    collab.add_log(aid, f"复盘结论：{OUTCOMES[outcome]}" + (f" — {note.strip()}" if note and note.strip() else ""))
+
+
+# ---------------------------------------------------------------------------
+# 编辑、取消
+# ---------------------------------------------------------------------------
+def update(name: str, aid: int, *, title=None, due_date=None, note=None):
     a = state.get_action(aid)
     if not a:
         raise KeyError(aid)
-    changes, logs = {}, []
+    changes, logs, due_changed = {}, [], False
     if title is not None and title.strip() and title.strip() != a["name"]:
         changes["name"] = title.strip()[:60]
-        logs.append(f"名称改为「{changes['name']}」")
-        plan = json.loads(a.get("plan_json") or "{}")
+        plan = _loads(a.get("plan_json"), {})
         plan["name"] = changes["name"]
         changes["plan_json"] = json.dumps(plan, ensure_ascii=False)
-    if due_date is not None and due_date != (a.get("due_date") or ""):
-        changes["due_date"] = due_date or None
-        logs.append(f"截止日期改为 {due_date}" if due_date else "清除截止日期")
+        logs.append(f"名称改为「{changes['name']}」")
+    if due_date and due_date != a.get("due_date"):
+        if a["status"] != "doing":
+            raise ValueError("只有执行中的待办可以改截止日期")
+        changes["due_date"] = due_date
+        logs.append(f"截止日期改为 {due_date}")
+        due_changed = True
     if note is not None and note.strip() != (a.get("note") or ""):
         changes["note"] = note.strip() or None
         logs.append("更新备注")
-    if status and status != a["status"]:
-        if status == "executed":
-            if a["status"] in ("rejected", "cancelled"):
-                raise ValueError("已驳回或已取消的待办不能标记执行")
-            changes.update(status="executed", exec_date=exec_date or data.ds_of(name).as_of.strftime("%Y-%m-%d"))
-        elif status == "cancelled":
-            if a["status"] in ("executed", "rejected"):
-                raise ValueError("已执行或已驳回的待办不能取消")
-            changes["status"] = "cancelled"
-        elif status == "adopted":
-            if a["status"] != "cancelled":
-                raise ValueError("只有已取消的待办可以重新打开")
-            changes["status"] = "adopted"
-        else:
-            changes["status"] = status
-        logs.append(STATUS_TEXT.get(status, "状态改为 " + status) + (f"：{reason}" if reason else ""))
     if changes:
         state.update_action(aid, **changes)
         for t in logs:
             collab.add_log(aid, t)
-        # 协同事项与飞书同步（飞书调用放到后台，不拖慢页面）
-        events = []
-        if "due_date" in changes and changes["due_date"]:
-            collab.set_due(aid, changes["due_date"])
-            events.append(("due", changes["due_date"]))
-        if "name" in changes:
-            events.append(("rename", ""))
-        if changes.get("status") == "cancelled":
-            collab.cancel_all(aid, reason)
-            events.append(("cancel", reason or ""))
-        if changes.get("status") == "adopted":
-            collab.reopen_all(aid)
-            collab._refresh_action(name, aid)
-            events.append(("reopen", ""))
-        if events:
-            from . import notify
-            threading.Thread(target=lambda: [notify.changed(aid, w, d) for w, d in events], daemon=True).start()
+    if due_changed:
+        collab.set_due(aid, due_date)
+        _bg(lambda: _notify().changed(aid, "due", due_date))
+    elif "name" in changes:
+        _bg(lambda: _notify().changed(aid, "rename", ""))
     return state.get_action(aid)
 
 
+def cancel(name: str, aid: int, reason: str | None = None):
+    a = state.get_action(aid)
+    if not a or a["status"] != "doing":
+        raise ValueError("只有执行中的待办可以取消")
+    state.update_action(aid, status="cancelled", cancel_reason=(reason or "").strip() or None, closed_date=today(name))
+    collab.cancel_all(aid, reason)
+    collab.add_log(aid, "取消待办" + (f"：{reason}" if reason else ""))
+    _bg(lambda: _notify().changed(aid, "cancel", reason or ""))
+
+
+def _notify():
+    from . import notify
+    return notify
+
+
+def _bg(fn):
+    threading.Thread(target=fn, daemon=True).start()
+
+
 # ---------------------------------------------------------------------------
-# 从追问生成待办草稿
+# 驳回的 AI 方案（不生成待办，只留记录）
+# ---------------------------------------------------------------------------
+def reject_plan(name: str, pid: str, plan: dict, reason: str, card_id: str | None = None) -> int:
+    if not reason:
+        raise ValueError("请选择驳回原因")
+    return state.add_rejection(ds=name, product_id=pid, card_id=card_id, action_id=plan.get("action_id"),
+                               cause=plan.get("cause"), name=plan.get("name"), reason=reason)
+
+
+# ---------------------------------------------------------------------------
+# 输出给前端
+# ---------------------------------------------------------------------------
+def decorate(name: str, a: dict) -> dict:
+    a = advance(name, a)
+    hs = state.list_handoffs(action_row=a["id"])
+    out = dict(a)
+    out["plan"] = _loads(out.pop("plan_json", None), {})
+    out["context"] = _loads(out.pop("context_json", None), {})
+    out["log"] = _loads(out.pop("log_json", None), [])
+    out["step_done"] = _loads(out.get("step_done"), [])
+    out["source"] = out.get("source") or "diagnosis"
+    out["source_name"] = SOURCE_NAMES.get(out["source"], out["source"])
+    out["stage_name"] = STAGE_NAMES.get(out["status"], out["status"])
+    out["outcome_name"] = OUTCOMES.get(out.get("outcome") or "")
+    out["handoffs"] = [collab.decorate_handoff(h) for h in hs]
+    out["progress"] = collab.progress(a, hs)
+    out["track_days"] = int(out.get("track_days") or DEFAULT_TRACK_DAYS)
+    out["overdue"] = bool(out["status"] == "doing" and out.get("due_date") and out["due_date"] < today(name))
+    if out.get("exec_date"):
+        out["effect"] = _effect(name, a)
+    if out["status"] == "review":
+        out["suggestion"] = suggestion(name, a)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 对话生成待办草稿
 # ---------------------------------------------------------------------------
 TODO_RE = re.compile(r"<todo>\s*(\{.*?\})\s*</todo>", re.S)
 
 SUGGEST_RULE = """
-如果你的回答建议运营去做具体的事情（需要有人执行的动作），在回答最后另起一行，附上一个待办建议，格式严格如下（整段放在 <todo> 标签内，JSON 不换行也可以）：
-<todo>{"name": "待办名称，15 字以内", "steps": [{"text": "具体步骤", "by": "我|供应链|投放运营|商品主管"}], "track_metric": "gmv|cvr|uv|aov|units|rating", "due_days": 3}</todo>
-- 步骤 1–4 步，每步写清楚做什么、对象是什么；需要其他角色做的步骤把 by 写成对应角色。
-- 只是解释原因、回答数据问题时，不要附待办建议。
-- 待办建议不要在正文里再重复描述。"""
+## 待办卡片
+以下两种情况，必须在回答最后另起一行附上一张待办卡片（整段放在 <todo> 标签内）：
+1. 运营明确要求建待办（如「帮我建个待办」「记一下」「安排一下」）；
+2. 你的回答建议运营去做具体的事情。
+只是解释原因、回答数据问题时，不要附卡片。卡片格式严格如下：
+<todo>{"name": "待办名称，15 字以内", "steps": [{"text": "具体步骤", "by": "我|供应链|投放运营"}], "track_metric": "gmv|cvr|uv|aov|units|rating", "track_days": 7, "due_days": 3, "note": "一句话背景，引用对话里核对过的数字"}</todo>
+- 步骤 1–4 步，每步写清做什么、对象是谁。负责人：补货、批次质量问题归「供应链」；推广投放归「投放运营」；其余（含调价）归「我」。
+- 跟踪指标选和刚才讨论的问题最相关的指标；运营没说截止就用 3 天。
+- 卡片内容不要在正文里重复。"""
 
 
 def split_suggestion(text: str, name: str) -> tuple[str, dict | None]:
-    """把回答中的 <todo> 建议取出来，返回（正文，草稿）。"""
+    """把回答中的 <todo> 卡片取出来，返回（正文，草稿）。"""
     m = TODO_RE.search(text or "")
     if not m:
         return text, None
@@ -168,28 +329,33 @@ def normalize_draft(raw: dict, name: str) -> dict | None:
     title = str(raw.get("name") or "").strip()
     if not title or not steps:
         return None
-    try:
-        days = max(0, min(30, int(raw.get("due_days", DEFAULT_DUE_DAYS))))
-    except (TypeError, ValueError):
-        days = DEFAULT_DUE_DAYS
+
+    def _int(v, d, lo, hi):
+        try:
+            return max(lo, min(hi, int(v)))
+        except (TypeError, ValueError):
+            return d
+    days = _int(raw.get("due_days", DEFAULT_DUE_DAYS), DEFAULT_DUE_DAYS, 0, 30)
     metric = raw.get("track_metric") if raw.get("track_metric") in TRACK_METRICS else "gmv"
-    return dict(name=title[:60], steps=steps, track_metric=metric, due_date=default_due(name, days),
-                note=str(raw.get("note") or "").strip()[:300])
+    return dict(name=title[:60], steps=steps, track_metric=metric,
+                track_days=_int(raw.get("track_days", DEFAULT_TRACK_DAYS), DEFAULT_TRACK_DAYS, 3, 30),
+                due_date=default_due(name, days), note=str(raw.get("note") or "").strip()[:300],
+                due_is_default="due_days" not in raw)
 
 
 DRAFT_SYSTEM = """你负责把一段商品运营对话整理成一条待办。只输出一个 JSON 对象，不要其他文字：
-{"name": "待办名称，15 字以内", "steps": [{"text": "具体步骤", "by": "我|供应链|投放运营|商品主管"}], "track_metric": "gmv|cvr|uv|aov|units|rating", "due_days": 3, "note": "一句话说明为什么要做（引用对话中的数字）"}
+{"name": "待办名称，15 字以内", "steps": [{"text": "具体步骤", "by": "我|供应链|投放运营"}], "track_metric": "gmv|cvr|uv|aov|units|rating", "track_days": 7, "due_days": 3, "note": "一句话说明为什么要做（引用对话中的数字）"}
 - 步骤 1–4 步，来自对话内容，不要编造对话里没有的数字。
-- 由商品运营自己完成的步骤 by 写「我」；需要补货或排查批次写「供应链」；调整推广写「投放运营」；超出权限的调价等写「商品主管」。"""
+- 负责人：补货、批次质量问题归「供应链」；推广投放归「投放运营」；其余（含调价）归「我」。"""
 
 
 def _heuristic(reply: str, question: str, name: str) -> dict:
     lines = [re.sub(r"^\s*(?:[-*•·]|\d+[.、)])\s*", "", x).strip() for x in (reply or "").splitlines()]
     lines = [re.sub(r"[*#`]", "", x) for x in lines if x]
     bullets = [x for x in lines if 6 <= len(x) <= 120 and not x.endswith(("：", ":"))][:4] or [(reply or question)[:120]]
-    title = re.sub(r"[？?。！!]$", "", (question or bullets[0]).strip())[:20] or "追问待办"
+    title = re.sub(r"[？?。！!]$", "", (question or bullets[0]).strip())[:20] or "对话待办"
     return dict(name=title, steps=[dict(text=b, by="我") for b in bullets], track_metric="gmv",
-                due_date=default_due(name), note="")
+                track_days=DEFAULT_TRACK_DAYS, due_date=default_due(name), note="", due_is_default=True)
 
 
 def draft_from_chat(name: str, pid: str, messages: list[dict], reply: str) -> dict:

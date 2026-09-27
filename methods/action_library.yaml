@@ -6,8 +6,9 @@
 #   causes      适用根因
 #   requires    所需数据（缺失则该动作不进入候选）
 #   params      参数计算方式（由 core/actions.py 按真实数据计算）
-#   constraints 约束检查（不通过则不展示；超出权限标记「需审批」）
-#   exec_type   执行类型：自己执行 / 需审批 / 转交
+#   constraints 约束检查（不通过则不展示；超出调价权限或可能破价时给出风险提示，不拦截）
+#   exec_type   执行类型：自己执行 / 转交
+#   due_days    采纳后默认截止天数（按业务日期）
 #   steps       执行步骤模板，{} 中的值由计算结果填入
 #   step_by     每一步由谁来做（与 steps 一一对应）：我 = 发起的商品运营本人，其余为协同角色；
 #               不写时按 exec_type 推断（自己执行 → 我；转交 → owner_role）
@@ -23,6 +24,7 @@ actions:
     requires: [stock]
     params: 补货量 = 基准日均销量 × (补货周期 + 安全天数) − 当前库存 − 在途量
     constraints: 补货量 ≤ 0 时改为「确认在途到货时间」
+    due_days: 1
     exec_type: 转交
     owner_role: 供应链
     steps:
@@ -40,6 +42,7 @@ actions:
     requires: [stock]
     params: 替代规格 = 同商品有货且历史销量最高的规格；断货规格设为到货提醒或预售
     constraints: 替代规格库存可售天数 ≥ 预计恢复天数
+    due_days: 1
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -58,6 +61,7 @@ actions:
     requires: [stock, channel]
     params: 断货规格与商品近 7 日付费访客
     constraints: 近 7 日付费访客 > 0
+    due_days: 1
     exec_type: 转交
     owner_role: 投放运营
     steps:
@@ -75,7 +79,8 @@ actions:
     causes: [price_disadvantage]
     requires: [price, comp_price, cost_price]
     params: 券面额 = 自家到手价 − 竞品到手价（取整到 5 元）
-    constraints: 券后毛利率 ≥ 毛利底线；降幅 ≤ 自主调价权限，否则需审批；不低于近 N 天最低价，否则需审批
+    constraints: 券后毛利率 ≥ 毛利底线；降幅 ≤ 自主调价权限、不低于近 N 天最低价，否则给出风险提示
+    due_days: 1
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -95,6 +100,7 @@ actions:
     condition: 价格劣势持续 ≥ 7 天（竞品为长期调价）
     params: 新到手价 = 竞品到手价
     constraints: 同店铺优惠券
+    due_days: 1
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -112,6 +118,7 @@ actions:
     requires: [price, comp_price, cost_price]
     params: 赠品价值 ≈ 价差，赠品品种取自品类配置
     constraints: 含赠品成本后毛利率 ≥ 毛利底线
+    due_days: 2
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -129,6 +136,7 @@ actions:
     requires: [price, cost_price]
     params: 满 2 件折扣 = 使件单价不高于竞品到手价（无竞品价时按 9 折）
     constraints: 折后毛利率 ≥ 毛利底线
+    due_days: 2
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -146,6 +154,7 @@ actions:
     requires: [channel]
     params: 付费访客日均缺口；可挽回日均 GMV = 缺口 × 基线转化率 × 基线客单价
     constraints: —
+    due_days: 1
     exec_type: 转交
     owner_role: 投放运营
     steps:
@@ -164,6 +173,7 @@ actions:
     requires: [channel]
     params: 搜索访客下滑幅度
     constraints: —
+    due_days: 3
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -182,6 +192,7 @@ actions:
     requires: [events]
     params: 活动期与活动后日均访客差额
     constraints: 距下一档活动开始 ≥ 报名提前天数（演示数据未提供活动日历时，给出报名建议并提示核对报名时间）
+    due_days: 3
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -199,6 +210,7 @@ actions:
     requires: []
     params: —
     constraints: —
+    due_days: 1
     exec_type: 自己执行
     owner_role: 商品运营
     steps:
@@ -215,6 +227,7 @@ actions:
     requires: [rating]
     params: 差评集中日期、评分与退款率变化
     constraints: —
+    due_days: 2
     exec_type: 自己执行 + 转交
     owner_role: 商品运营 / 供应链
     steps:
@@ -234,6 +247,7 @@ actions:
     requires: [stock]
     params: 补货量 = 近 3 日日均销量 × (补货周期 + 安全天数) − 当前库存 − 在途量
     constraints: 补货量 > 0
+    due_days: 2
     exec_type: 转交
     owner_role: 供应链
     steps:
@@ -253,6 +267,7 @@ actions:
     requires: [expiry_date]      # 演示数据未提供批次效期，因此不会输出
     params: 按剩余效期分档折扣
     constraints: 毛利底线
+    due_days: 2
     exec_type: 自己执行
     owner_role: 商品运营
     steps:

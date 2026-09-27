@@ -105,29 +105,13 @@ class AlertUpdate(BaseModel):
     note: Optional[str] = None
 
 
-class ActionCreate(BaseModel):
-    plan: dict = Field(..., description="诊断结果中的一个方案对象")
-    product_id: str
-    card_id: Optional[str] = None
-    decision: Literal["adopt", "transfer", "reject"]
-    reason: Optional[str] = None
-    role: Optional[str] = None
-    context: Optional[dict] = Field(None, description="诊断结论与证据，用于生成转交单：{summary, evidence: [..]}")
-    notify: bool = Field(False, description="保存后立即把协同事项推送到对方飞书")
-
-
 class StepUpdate(BaseModel):
     index: int
     done: bool
 
 
-class HandoffPut(BaseModel):
-    message: Optional[str] = None
-    role: Optional[str] = None
-
-
 class HandoffSend(BaseModel):
-    channel: Literal["copy", "feishu"] = "copy"
+    channel: Literal["auto", "copy", "feishu"] = "auto"
     message: Optional[str] = None
 
 
@@ -135,14 +119,8 @@ class HandoffReply(BaseModel):
     text: str
 
 
-class ActionPreview(BaseModel):
-    plan: dict
-    product_id: str
-    context: Optional[dict] = None
-
-
 class HandoffRespond(BaseModel):
-    status: Literal["received", "done", "question", "approved", "declined"]
+    status: Literal["done", "question"]
     note: Optional[str] = None
     by: Optional[str] = None
 
@@ -156,15 +134,6 @@ class FeishuTest(BaseModel):
     role: str
 
 
-class ActionUpdate(BaseModel):
-    status: Optional[Literal["executed", "adopted", "transferred", "rejected", "cancelled"]] = None
-    exec_date: Optional[str] = None
-    name: Optional[str] = None
-    due_date: Optional[str] = None
-    note: Optional[str] = None
-    reason: Optional[str] = None
-
-
 class TodoStep(BaseModel):
     text: str
     by: str = "我"
@@ -172,14 +141,39 @@ class TodoStep(BaseModel):
 
 class TodoCreate(BaseModel):
     product_id: str
-    name: str
-    steps: list[TodoStep]
+    name: str = ""
+    steps: list[TodoStep] = []
     due_date: Optional[str] = None
-    track_metric: Optional[str] = "gmv"
+    track_metric: Optional[str] = None
+    track_days: Optional[int] = None
     note: Optional[str] = None
-    source: Literal["chat", "manual"] = "manual"
+    source: Literal["diagnosis", "chat", "manual"] = "manual"
     context: Optional[dict] = None
-    notify: bool = False
+    plan: Optional[dict] = Field(None, description="采纳 AI 方案时传入诊断结果中的方案对象")
+    card_id: Optional[str] = None
+    notify: bool = Field(False, description="保存后立即把同事的步骤推送到对方飞书")
+
+
+class TodoUpdate(BaseModel):
+    name: Optional[str] = None
+    due_date: Optional[str] = None
+    note: Optional[str] = None
+
+
+class TodoCancel(BaseModel):
+    reason: Optional[str] = None
+
+
+class TodoReview(BaseModel):
+    outcome: Literal["effective", "ineffective", "unknown"]
+    note: Optional[str] = None
+
+
+class PlanReject(BaseModel):
+    product_id: str
+    plan: dict
+    reason: str
+    card_id: Optional[str] = None
 
 
 class TodoDraft(BaseModel):
@@ -252,18 +246,7 @@ def api_products(ds: str = DS, focus: bool = False):
 
 
 def _decorate_action(name, a):
-    ds = data.ds_of(name)
-    collab.decorate_action(a)
-    try:
-        a["plan"] = json.loads(a.get("plan_json") or "{}")
-    except json.JSONDecodeError:
-        a["plan"] = {}
-    a.pop("plan_json", None)
-    a.pop("context_json", None)
-    if a["status"] in ("executed", "transferred", "adopted", "declined"):
-        a["effect"] = weekly.effect(ds, a["product_id"], a.get("track_metric") or "gmv", a.get("exec_date"),
-                                    variant=a.get("variant"))
-    return a
+    return todos.decorate(name, a)
 
 
 @app.get("/api/products/{pid}", tags=["商品"])
@@ -272,8 +255,7 @@ def api_product(pid: str, ds: str = DS):
     if pid not in data.ds_of(name).product_ids():
         raise HTTPException(404, f"未知商品 {pid}")
     d = data.product_detail(name, pid)
-    for a in d["actions"]:
-        _decorate_action(name, a)
+    d["actions"] = [_decorate_action(name, a) for a in d["actions"]]
     d["diagnosis_cached"] = bool(state.cache_get(diagnose.cache_key(name, pid)))
     return d
 
@@ -326,7 +308,7 @@ def api_chat(pid: str, body: ChatBody, ds: str = DS):
 
 
 # ---------------- 动作 ----------------
-@app.get("/api/actions", tags=["行动跟踪"])
+@app.get("/api/actions", tags=["待办中心"])
 def api_actions(ds: str = DS, product_id: Optional[str] = None):
     name = ds_name(ds)
     return [_decorate_action(name, a) for a in state.list_actions(name, product_id)]
@@ -346,53 +328,116 @@ def _base_url(request: Request | None = None) -> str | None:
     return state.get_setting("public_base_url") or (str(request.base_url) if request is not None else None)
 
 
-def _link(hid: int, request: Request | None = None) -> str | None:
-    b = _base_url(request)
-    return f"{b.rstrip('/')}/#/h/{hid}" if b else None
+def _action_or_404(aid: int) -> dict:
+    a = state.get_action(aid)
+    if not a:
+        raise HTTPException(404, "待办不存在")
+    return a
 
 
-@app.post("/api/actions", tags=["行动跟踪"])
-def api_action_create(body: ActionCreate, request: Request, ds: str = DS):
+def _todo_plan(name: str, body: TodoCreate) -> dict:
+    return todos.build_plan(name, body.product_id, body.name, [s.model_dump() for s in body.steps], body.track_metric,
+                            body.track_days, body.source, base=body.plan)
+
+
+@app.post("/api/todos/preview", tags=["待办中心"], summary="保存前预览：哪些步骤要通知谁、消息内容")
+def api_todo_preview(body: TodoCreate, ds: str = DS):
     name = ds_name(ds)
-    d = data.ds_of(name)
-    plan = core_actions.annotate(dict(body.plan))
-    if body.decision == "reject" and not body.reason:
-        raise HTTPException(400, "驳回时需要选择原因")
-    status = "rejected" if body.decision == "reject" else "adopted"
-    today = d.as_of.strftime("%Y-%m-%d")
-    aid = state.add_action(ds=name, card_id=body.card_id, product_id=body.product_id,
-                           product_name=d.product(body.product_id)["product_name"], action_id=plan.get("action_id"),
-                           name=plan.get("name"), cause=plan.get("cause"), cause_name=plan.get("cause_name"),
-                           target=plan.get("target"), plan_json=dumps(plan), exec_type=plan.get("exec_type"),
-                           owner_role=plan.get("owner_role"), status=status, reject_reason=body.reason,
-                           transfer_role=None, context_json=dumps(body.context or {}),
-                           track_metric=(plan.get("track") or {}).get("metric"),
-                           variant=(plan.get("params") or {}).get("variant"),
-                           adopted_date=today if body.decision != "reject" else None, source="diagnosis",
-                           due_date=todos.default_due(name) if body.decision != "reject" else None)
-    collab.add_log(aid, "驳回 AI 诊断方案：" + (body.reason or "") if body.decision == "reject" else "采纳 AI 诊断方案")
-    notified = []
-    if body.decision != "reject":
-        collab.create_for_action(name, aid, plan, body.context or {}, _base_url(request))
-        if body.notify:
-            notified = notify.send_all(aid)
-    if body.card_id and body.decision != "reject":
-        state.set_card(name, body.card_id, "done")
-    return dict(ok=True, id=aid, notified=notified)
+    if body.product_id not in data.ds_of(name).product_ids():
+        raise HTTPException(400, "请选择商品")
+    plan = _todo_plan(name, body)
+    ctx = dict(body.context or {})
+    if not ctx.get("summary") and body.note:
+        ctx["summary"] = body.note
+    due = body.due_date or todos.default_due(name, int(plan.get("due_days") or todos.DEFAULT_DUE_DAYS))
+    return notify.preview(todos.preview(name, body.product_id, plan, ctx, due))
 
 
-@app.post("/api/actions/preview", tags=["行动跟踪"], summary="采纳前预览：哪些步骤要通知谁、消息内容")
-def api_action_preview(body: ActionPreview, ds: str = DS):
+@app.post("/api/todos", tags=["待办中心"], summary="新建待办（采纳 AI 方案 / 对话生成 / 手动新建）")
+def api_todo_create(body: TodoCreate, request: Request, ds: str = DS):
     name = ds_name(ds)
-    plan = core_actions.annotate(dict(body.plan))
-    return notify.preview(collab.draft_handoffs(name, body.product_id, plan, body.context or {}))
+    try:
+        aid = todos.create(name, body.product_id, title=body.name, steps=[s.model_dump() for s in body.steps],
+                           due_date=body.due_date, track_metric=body.track_metric, track_days=body.track_days,
+                           note=body.note, source=body.source, context=body.context, plan=body.plan,
+                           card_id=body.card_id, base_url=_base_url(request))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    notified = notify.send_all(aid) if body.notify else []
+    return dict(_decorate_action(name, state.get_action(aid)), notified=notified)
 
 
-@app.patch("/api/actions/{aid}/steps", tags=["行动跟踪"], summary="勾选 / 取消勾选我的步骤")
-def api_action_step(aid: int, body: StepUpdate):
-    if not state.get_action(aid):
-        raise HTTPException(404, "动作不存在")
+@app.patch("/api/actions/{aid}", tags=["待办中心"], summary="编辑待办：名称、截止日期、备注")
+def api_action_update(aid: int, body: TodoUpdate, ds: str = DS):
+    name = ds_name(ds)
+    _action_or_404(aid)
+    try:
+        todos.update(name, aid, title=body.name, due_date=body.due_date, note=body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _decorate_action(name, state.get_action(aid))
+
+
+@app.patch("/api/actions/{aid}/steps", tags=["待办中心"], summary="勾选 / 取消勾选我的步骤")
+def api_action_step(aid: int, body: StepUpdate, ds: str = DS):
+    name = ds_name(ds)
+    a = _action_or_404(aid)
+    if a["status"] != "doing":
+        raise HTTPException(400, "只有执行中的待办可以勾选步骤")
     collab.set_step(aid, body.index, body.done)
+    return _decorate_action(name, state.get_action(aid))
+
+
+@app.post("/api/actions/{aid}/cancel", tags=["待办中心"], summary="取消待办（仅执行中）")
+def api_action_cancel(aid: int, body: TodoCancel, ds: str = DS):
+    name = ds_name(ds)
+    _action_or_404(aid)
+    try:
+        todos.cancel(name, aid, body.reason)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _decorate_action(name, state.get_action(aid))
+
+
+@app.post("/api/actions/{aid}/end-tracking", tags=["待办中心"], summary="提前结束跟踪，进入待复盘")
+def api_action_end_tracking(aid: int, ds: str = DS):
+    name = ds_name(ds)
+    _action_or_404(aid)
+    try:
+        todos.end_tracking(name, aid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _decorate_action(name, state.get_action(aid))
+
+
+@app.post("/api/actions/{aid}/review", tags=["待办中心"], summary="复盘：确认结论，待办完成")
+def api_action_review(aid: int, body: TodoReview, ds: str = DS):
+    name = ds_name(ds)
+    _action_or_404(aid)
+    try:
+        todos.review(name, aid, body.outcome, body.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _decorate_action(name, state.get_action(aid))
+
+
+@app.get("/api/rejections", tags=["待办中心"], summary="驳回的 AI 方案")
+def api_rejections(ds: str = DS, product_id: Optional[str] = None):
+    return state.list_rejections(ds_name(ds), product_id)
+
+
+@app.post("/api/rejections", tags=["待办中心"], summary="驳回 AI 方案（不生成待办）")
+def api_reject(body: PlanReject, ds: str = DS):
+    try:
+        rid = todos.reject_plan(ds_name(ds), body.product_id, body.plan, body.reason, body.card_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return dict(ok=True, id=rid)
+
+
+@app.delete("/api/rejections/{rid}", tags=["待办中心"], summary="撤销驳回")
+def api_reject_undo(rid: int):
+    state.delete_rejection(rid)
     return dict(ok=True)
 
 
@@ -449,7 +494,7 @@ def _feishu_sync(hid: int, request: Request | None = None, notify_me: bool = Tru
         notify.sync(hid, notify_me)
 
 
-# ---------------- 协同 ----------------
+# ---------------- 协同（分给同事的步骤） ----------------
 @app.get("/api/handoffs", tags=["协同"])
 def api_handoffs(ds: str = DS):
     return [collab.decorate_handoff(h, with_context=True) for h in state.list_handoffs(ds_name(ds))]
@@ -467,16 +512,7 @@ def api_handoff(hid: int):
     return collab.decorate_handoff(_handoff_or_404(hid), with_context=True)
 
 
-@app.put("/api/handoffs/{hid}", tags=["协同"], summary="发送前修改转交单内容")
-def api_handoff_put(hid: int, body: HandoffPut):
-    _handoff_or_404(hid)
-    kw = {k: v for k, v in body.model_dump().items() if v is not None}
-    if kw:
-        state.update_handoff(hid, **kw)
-    return collab.decorate_handoff(state.get_handoff(hid), with_context=True)
-
-
-@app.post("/api/handoffs/{hid}/send", tags=["协同"])
+@app.post("/api/handoffs/{hid}/send", tags=["协同"], summary="发出未通知的协同（飞书推送或复制文字）")
 def api_handoff_send(hid: int, body: HandoffSend, request: Request):
     _handoff_or_404(hid)
     _base_url(request)
@@ -498,9 +534,7 @@ def api_handoff_remind(hid: int, request: Request):
 
 @app.post("/api/handoffs/{hid}/reply", tags=["协同"], summary="回复对方的疑问")
 def api_handoff_reply(hid: int, body: HandoffReply, request: Request):
-    h = _handoff_or_404(hid)
-    if h["status"] != "question":
-        raise HTTPException(400, "对方没有提出疑问")
+    _handoff_or_404(hid)
     _base_url(request)
     try:
         return notify.reply(hid, body.text)
@@ -508,7 +542,19 @@ def api_handoff_reply(hid: int, body: HandoffReply, request: Request):
         raise HTTPException(400, str(e))
 
 
-@app.post("/api/handoffs/{hid}/respond", tags=["协同"], summary="协同方处理：已接收 / 已完成 / 有疑问 / 批准 / 驳回")
+@app.post("/api/handoffs/{hid}/proxy-done", tags=["协同"], summary="代为标记完成（同事迟迟未处理时）")
+def api_handoff_proxy(hid: int, request: Request):
+    _handoff_or_404(hid)
+    _base_url(request)
+    try:
+        h = collab.proxy_done(hid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    threading.Thread(target=notify.proxied, args=(hid,), daemon=True).start()
+    return collab.decorate_handoff(h, with_context=True)
+
+
+@app.post("/api/handoffs/{hid}/respond", tags=["协同"], summary="同事处理：已完成 / 有疑问")
 def api_handoff_respond(hid: int, body: HandoffRespond, request: Request):
     _handoff_or_404(hid)
     try:
@@ -516,50 +562,12 @@ def api_handoff_respond(hid: int, body: HandoffRespond, request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e))
     # 飞书卡片刷新与通知放到后台，避免拖慢响应（飞书要求按钮回调 3 秒内返回）
-    _base_url(request)  # 在请求线程内记下对外访问地址，供后台线程生成链接
+    _base_url(request)
     threading.Thread(target=_feishu_sync, args=(hid, None), daemon=True).start()
     return collab.decorate_handoff(h, with_context=True)
 
 
-@app.patch("/api/actions/{aid}", tags=["行动跟踪"], summary="编辑待办：名称、截止日期、备注、状态")
-def api_action_update(aid: int, body: ActionUpdate, ds: str = DS):
-    name = ds_name(ds)
-    try:
-        todos.update(name, aid, title=body.name, due_date=body.due_date, note=body.note, status=body.status,
-                     exec_date=body.exec_date, reason=body.reason)
-    except KeyError:
-        raise HTTPException(404, "动作不存在")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return _decorate_action(name, state.get_action(aid))
-
-
-@app.post("/api/todos", tags=["行动跟踪"], summary="新建待办（手动 / 来自追问）")
-def api_todo_create(body: TodoCreate, request: Request, ds: str = DS):
-    name = ds_name(ds)
-    try:
-        aid = todos.create(name, body.product_id, body.name, [s.model_dump() for s in body.steps], body.due_date,
-                           body.track_metric, body.note, body.source, body.context, _base_url(request))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    notified = notify.send_all(aid) if body.notify else []
-    return dict(_decorate_action(name, state.get_action(aid)), notified=notified)
-
-
-@app.post("/api/todos/preview", tags=["行动跟踪"], summary="保存前预览：哪些步骤要通知谁、消息内容")
-def api_todo_preview(body: TodoCreate, ds: str = DS):
-    name = ds_name(ds)
-    if body.product_id not in data.ds_of(name).product_ids():
-        raise HTTPException(400, "请选择商品")
-    plan = todos.build_plan(name, body.product_id, body.name or "待办", [s.model_dump() for s in body.steps],
-                            body.track_metric or "gmv", body.source)
-    ctx = dict(body.context or {})
-    if not ctx.get("summary") and body.note:
-        ctx["summary"] = body.note
-    return notify.preview(collab.draft_handoffs(name, body.product_id, plan, ctx, body.due_date or todos.default_due(name)))
-
-
-@app.post("/api/chat/{pid}/todo-draft", tags=["AI"], summary="把一条追问回复整理成待办草稿")
+@app.post("/api/chat/{pid}/todo-draft", tags=["AI"], summary="把一条对话回复整理成待办草稿")
 def api_todo_draft(pid: str, body: TodoDraft, ds: str = DS):
     name = ds_name(ds)
     if pid not in data.ds_of(name).product_ids():

@@ -6,20 +6,19 @@ import time
 
 from core import sop, weekly
 
-from .. import data, llm_client, state
+from .. import data, llm_client, state, todos
 from . import diagnose, prompts, verify
 
 
 def _actions_for_pack(name):
-    ds = data.ds_of(name)
     out = []
-    names = {"adopted": "已采纳待执行", "executed": "已执行", "transferred": "已转交", "rejected": "已驳回",
-             "declined": "审批未通过", "cancelled": "已取消"}
     for a in state.list_actions(name):
-        out.append(dict(card_id=a["card_id"], product_id=a["product_id"], product_name=a["product_name"], name=a["name"],
-                        cause_name=a.get("cause_name"),
-                        status=names.get(a["status"], a["status"]), exec_date=a["exec_date"],
-                        track_metric=a["track_metric"], variant=a["variant"]))
+        d = todos.decorate(name, a)          # 顺带推进到期的跟踪
+        out.append(dict(card_id=d["card_id"], product_id=d["product_id"], product_name=d["product_name"], name=d["name"],
+                        cause_name=d.get("cause_name"), stage=d["status"], status=d["stage_name"], outcome_name=d.get("outcome_name"),
+                        review_note=d.get("review_note"), closed_date=d.get("closed_date"), exec_date=d.get("exec_date"),
+                        due_date=d.get("due_date"), track_metric=d.get("track_metric"), track_days=d.get("track_days"),
+                        variant=d.get("variant")))
     return out
 
 
