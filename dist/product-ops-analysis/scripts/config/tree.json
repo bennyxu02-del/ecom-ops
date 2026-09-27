@@ -1,0 +1,52 @@
+{
+ "root": "gmv",
+ "nodes": {
+  "gmv": {
+   "name": "GMV",
+   "kind": "math",
+   "op": "multiply",
+   "children": [
+    "uv",
+    "cvr",
+    "aov"
+   ]
+  },
+  "uv": {
+   "name": "访客数",
+   "kind": "math",
+   "op": "sum",
+   "breakdown": "channel"
+  },
+  "cvr": {
+   "name": "支付转化率",
+   "kind": "math",
+   "breakdown": "variant",
+   "factors": [
+    "stock",
+    "price",
+    "rating",
+    "campaign"
+   ]
+  },
+  "aov": {
+   "name": "客单价",
+   "kind": "math",
+   "op": "multiply",
+   "children": [
+    "unit_price",
+    "units_per_buyer"
+   ],
+   "factors": [
+    "promotion",
+    "coupon",
+    "variant_mix"
+   ]
+  }
+ },
+ "factors": {
+  "stock": "库存（规格断货、可售天数）",
+  "price": "价格竞争力（价格指数、竞品调价）",
+  "rating": "口碑（评分、退款率、集中差评）",
+  "campaign": "活动力度（活动上下线）"
+ }
+}

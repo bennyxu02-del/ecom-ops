@@ -81,13 +81,16 @@ def build(ds, cards: list[dict], actions: list[dict] | None = None, diagnoses: d
 
     # ---- 二、大盘趋势
     wins = C.weeks_back(ds, rp.get("trend_weeks", 8), end)
+    first_day = ds.dp["date"].min()
+    wins = [w for w in wins if w[0] >= first_day] or wins[-1:]     # 数据不足 8 周时只取完整的周，不补 0、不折算
+    nw = len(wins)
     wk_gmv = [sum((C.window_value(ds, [p], "gmv", w) or 0) for p in pids) * 7 for w in wins]
-    trend = dict(type="trend", title="近 8 周 GMV，本周高亮", unit="money", x=[C.wlabel(w) for w in wins],
+    trend = dict(type="trend", title=f"近 {nw} 周 GMV，本周高亮", unit="money", x=[C.wlabel(w) for w in wins],
                  series=[dict(name="周 GMV", data=[round(v) for v in wk_gmv], style="bar")], highlight=len(wins) - 1,
-                 baseline=dict(value=round(sum(wk_gmv) / len(wk_gmv)), text="8 周平均"))
+                 baseline=dict(value=round(sum(wk_gmv) / len(wk_gmv)), text=f"{nw} 周平均"))
     avg8 = sum(wk_gmv) / len(wk_gmv)
     rank = sorted(wk_gmv, reverse=True).index(wk_gmv[-1]) + 1
-    trend["summary"] = "；".join(f"{C.wlabel(w)} {money(v)}" for w, v in zip(wins, wk_gmv)) + f"；8 周平均 {money(avg8)}，本周排第 {rank}"
+    trend["summary"] = "；".join(f"{C.wlabel(w)} {money(v)}" for w, v in zip(wins, wk_gmv)) + f"；{nw} 周平均 {money(avg8)}，本周排第 {rank}"
     trend["values"] = wk_gmv + [avg8]
     alerts_open = [c for c in today_cards.values() if c["severity"] in ("red", "yellow") and not c.get("expected")]
     band = rp.get("flat_band", 0.05)
@@ -99,7 +102,7 @@ def build(ds, cards: list[dict], actions: list[dict] | None = None, diagnoses: d
         verdict = "整体下滑"
     else:
         verdict = "大盘平稳，但有商品在预警"
-    facts2 = dict(gmv=round(g1), gmv_prev=round(g0), change_pct=r(gchg), avg_8w=round(avg8), rank_in_8w=rank,
+    facts2 = dict(gmv=round(g1), gmv_prev=round(g0), change_pct=r(gchg), avg_8w=round(avg8), rank_in_8w=rank, trend_weeks=nw,
                   verdict=verdict, open_alerts=len(alerts_open), flat_band=band)
     if target:
         m0 = end.replace(day=1)
@@ -396,7 +399,7 @@ def render(pack: dict, book: C.ChartBook) -> str:
     c = ch["trend"]
     f = c["facts"]
     head(c)
-    L += [f"**本周 GMV {money(f['gmv'])}，在近 8 周里排第 {f['rank_in_8w']}，8 周平均 {money(f['avg_8w'])}。**", "",
+    L += [f"**本周 GMV {money(f['gmv'])}，在近 {f.get('trend_weeks', 8)} 周里排第 {f['rank_in_8w']}，{f.get('trend_weeks', 8)} 周平均 {money(f['avg_8w'])}。**", "",
           f"[图表:{c['chart']}]", "", c["judgment"] + "。", ""]
     if f.get("target"):
         t = f["target"]

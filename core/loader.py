@@ -92,6 +92,8 @@ def load(folder: str | Path, name: str | None = None, validate: bool = True) -> 
         if col not in products.columns:
             products[col] = default
     products["product_name"] = products["product_name"].fillna(products["product_id"])
+    for col in ("category", "sub_category"):
+        products[col] = products[col].fillna("")
     first_day = dp.groupby("product_id")["date"].min()
     products["launch_date"] = pd.to_datetime(products["launch_date"]).fillna(
         products["product_id"].map(first_day))

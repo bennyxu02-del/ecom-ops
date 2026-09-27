@@ -52,15 +52,35 @@ def _to_num(x: pd.Series) -> pd.Series:
     return v
 
 
-def read_any(path: Path) -> pd.DataFrame:
-    if path.suffix.lower() in (".xlsx", ".xls"):
-        return pd.read_excel(path)
+def _hits(cols) -> int:
+    allsyn = {_norm(x) for v in SYNONYMS.values() for x in v}
+    return sum(1 for c in cols if _norm(c) in allsyn)
+
+
+def _decode(path: Path) -> str:
+    raw = path.read_bytes()
     for enc in ("utf-8-sig", "gbk", "utf-8"):
         try:
-            return pd.read_csv(path, encoding=enc)
+            return raw.decode(enc)
         except UnicodeDecodeError:
             continue
-    raise ValueError(f"无法读取 {path}")
+    raise ValueError(f"无法读取 {path}：文件编码无法识别")
+
+
+def read_any(path: Path) -> pd.DataFrame:
+    """读取 CSV / Excel。后台导出常在表头上方带几行说明文字：自动找到字段名所在的行。"""
+    import io
+    if path.suffix.lower() in (".xlsx", ".xls"):
+        probe = pd.read_excel(path, header=None, nrows=20)
+        rows = [probe.iloc[i].astype(str).tolist() for i in range(len(probe))]
+        best = max(range(len(rows)), key=lambda i: _hits(rows[i]), default=0)
+        return pd.read_excel(path, header=best if rows and _hits(rows[best]) >= 3 else 0).dropna(how="all")
+    text = _decode(path)
+    lines = text.splitlines()[:20]
+    sep = "\t" if sum(x.count("\t") for x in lines) > sum(x.count(",") for x in lines) else ","
+    best = max(range(len(lines)), key=lambda i: _hits(lines[i].split(sep)), default=0)
+    skip = best if lines and _hits(lines[best].split(sep)) >= 3 else 0
+    return pd.read_csv(io.StringIO(text), sep=sep, skiprows=skip).dropna(how="all")
 
 
 def map_columns(cols: list[str]) -> tuple[dict, dict]:
@@ -89,10 +109,15 @@ def adapt(inputs: list[str], out: str, category: str | None = None, overrides: d
                 shutil.copy(f, out_dir / f.name)
         return dict(format="standard", out=str(out_dir), mapped="已是标准数据模型，直接使用",
                     missing=[], ambiguous={}, note=None)
-    # 情况二：单张宽表
-    if len(paths) != 1 or paths[0].is_dir():
-        raise ValueError("请提供一个标准数据目录，或一张商品日报表（CSV / Excel）")
-    df = read_any(paths[0])
+    # 情况二：商品日报宽表（一张，或同样格式的多张，例如按周分别导出）
+    if any(p.is_dir() for p in paths):
+        raise ValueError("请提供一个标准数据目录，或商品日报表文件（CSV / Excel，可以多张）")
+    frames = [read_any(p) for p in paths]
+    if len(frames) > 1:
+        cols = [set(f.columns) for f in frames]
+        if any(c != cols[0] for c in cols[1:]):
+            raise ValueError("多张表的列不一致，无法合并：请确认是同一种报表的导出")
+    df = pd.concat(frames, ignore_index=True).drop_duplicates()
     mapping, ambiguous = map_columns(list(df.columns))
     mapping.update(overrides or {})
     for k in list(ambiguous):
@@ -105,7 +130,7 @@ def adapt(inputs: list[str], out: str, category: str | None = None, overrides: d
     if "product_id" not in mapping and "product_name" in mapping:
         missing_req.remove("product_id")
         derived.append("商品编号取自商品名称")
-    report = dict(format="wide_table", source=str(paths[0]), rows=len(df),
+    report = dict(format="wide_table", source=[str(p) for p in paths] if len(paths) > 1 else str(paths[0]), rows=len(df),
                   mapped={k: v for k, v in mapping.items()}, ambiguous=ambiguous, derived=derived,
                   unmapped_columns=[c for c in df.columns if c not in mapping.values()])
     if missing_req or ambiguous:
@@ -171,11 +196,12 @@ def adapt(inputs: list[str], out: str, category: str | None = None, overrides: d
         dv = dv.merge(st.groupby(["date", "product_id"], as_index=False)["stock_units"].sum(), on=["date", "product_id"], how="left")
         dv["variant_id"] = dv["product_id"] + "V1"
         dv[["date", "variant_id", "units", "gmv", "stock_units"]].to_csv(out_dir / "daily_variant.csv", index=False)
-    missing_opt = {"stock": "库存（跳过断货类预警与库存归因）", "comp_price": "竞品价格（跳过价格劣势预警与价格类方案）",
-                   "cost_price": "成本价（无法测算毛利，价格类方案不输出）", "rating": "评分（跳过口碑类预警）",
-                   "refund_amount": "退款金额", "launch_date": "上架日期（用数据中首次出现日期代替）"}
+    missing_opt = {"stock": "库存（查不了库存和补货，诊断时无法判断断货）", "comp_price": "竞品到手价（看不了价差，诊断时无法判断价格劣势）",
+                   "cost_price": "成本价（算不了毛利，价格测算需要用户提供成本价）", "price": "到手价（价格测算需要用户提供当前到手价）",
+                   "rating": "评分（诊断时无法判断口碑问题）", "refund_amount": "退款金额",
+                   "launch_date": "上架日期（用数据中首次出现日期代替）"}
     report.update(ok=True, out=str(out_dir), category=cat,
                   missing_optional=[v for k, v in missing_opt.items() if k not in mapping],
                   channel_breakdown=bool(ch_cols), variant_breakdown=False,
-                  note="宽表没有规格与渠道明细时，规格下钻按「全部规格」处理，渠道下钻跳过")
+                  note="表里没有规格与渠道明细时，规格按「全部规格」处理，渠道拆分跳过")
     return report

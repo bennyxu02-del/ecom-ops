@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
-
-import yaml
 
 
 def methods_dir() -> Path:
@@ -20,9 +19,19 @@ def methods_dir() -> Path:
     raise FileNotFoundError("找不到 methods 目录，请设置 METHODS_DIR")
 
 
-def _load(name: str):
-    with open(methods_dir() / name, encoding="utf-8") as f:
+def _read(path: Path):
+    """平台读 YAML；Skill 包里的配置在打包时转成了同名 JSON，运行时不依赖 PyYAML。"""
+    if path.suffix == ".yaml" and not path.exists() and path.with_suffix(".json").exists():
+        path = path.with_suffix(".json")
+    with open(path, encoding="utf-8") as f:
+        if path.suffix == ".json":
+            return json.load(f)
+        import yaml
         return yaml.safe_load(f)
+
+
+def _load(name: str):
+    return _read(methods_dir() / name)
 
 
 @lru_cache(maxsize=None)
@@ -53,7 +62,7 @@ def tree() -> dict:
 @lru_cache(maxsize=None)
 def calendar() -> dict:
     p = methods_dir() / "calendar.yaml"
-    return _load("calendar.yaml") if p.exists() else {"festivals": []}
+    return _load("calendar.yaml") if p.exists() or p.with_suffix(".json").exists() else {"festivals": []}
 
 
 def read_text(name: str) -> str:
@@ -63,9 +72,9 @@ def read_text(name: str) -> str:
 @lru_cache(maxsize=None)
 def _profiles() -> dict:
     out = {}
-    for p in sorted((methods_dir() / "category_profiles").glob("*.yaml")):
-        with open(p, encoding="utf-8") as f:
-            out[p.stem] = yaml.safe_load(f)
+    d = methods_dir() / "category_profiles"
+    for p in sorted(list(d.glob("*.yaml")) + list(d.glob("*.json"))):
+        out.setdefault(p.stem, _read(p))
     return out
 
 

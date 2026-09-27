@@ -1,0 +1,43 @@
+{
+ "id": "snacks",
+ "name": "休闲零食",
+ "match": [
+  "snacks",
+  "零食",
+  "休闲零食",
+  "食品"
+ ],
+ "new_product_days": 21,
+ "growth_days": 60,
+ "margin_high": 0.45,
+ "gmv_drop_yellow": 0.1,
+ "gmv_drop_red": 0.18,
+ "z_threshold": 2.0,
+ "replenish_lead_days": 5,
+ "price_gap": 0.08,
+ "factor_priority": [
+  "stock",
+  "rating",
+  "campaign",
+  "price"
+ ],
+ "action_prefs": {
+  "price_actions": [
+   "bundle_discount",
+   "gift",
+   "store_coupon",
+   "price_match"
+  ],
+  "gifts": [
+   {
+    "name": "小包装试吃装",
+    "cost": 3,
+    "value": 12
+   }
+  ],
+  "enabled_optional": [
+   "expiry_promo"
+  ]
+ },
+ "seasonality_note": "节日礼盒需求集中（中秋、春节）；活动结束后回落属常见现象"
+}

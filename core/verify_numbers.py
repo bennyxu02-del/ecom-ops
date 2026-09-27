@@ -56,11 +56,12 @@ def check_text(text: str, allowed_set: set) -> list[str]:
         dec = len(raw.split(".")[1]) if "." in raw else 0
         if unit == "万":
             n *= 10000
-            if _match(n, 0, False, allowed) or any(abs(a - n) <= 500 for a in allowed):
+            tol = 0.5 * 10 ** (-dec) * 10000 + 1e-6       # 15.7 万 允许 ±500，8.88 万 只允许 ±50
+            if _match(n, 0, False, allowed) or any(abs(abs(a) - abs(n)) <= tol for a in allowed):
                 continue
             bad.append(raw + unit)
             continue
-        pct = unit == "%"
+        pct = unit == "%" or text[m.end():m.end() + 6].lstrip().startswith("个百分点")
         if not pct and dec == 0 and abs(n) <= 31:
             continue            # 日期、天数、条数等小整数不校验
         if not pct and n in (2025, 2026):

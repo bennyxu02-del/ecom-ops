@@ -122,6 +122,9 @@ def frame(ds: Dataset, pids: list[str]) -> pd.DataFrame:
         parts.append(g)
     cols = ["uv", "buyers", "units", "gmv", "refund_amount", "cost"]
     df = pd.concat(parts)
+    for c in cols:                       # 数据里没有退款金额等列时按 0 汇总，不报错
+        if c not in df.columns:
+            df[c] = 0.0
     out = df[cols].groupby(level=0).sum().sort_index()
     if len(pids) == 1:
         for c in ("price", "comp_price", "rating"):
@@ -455,12 +458,16 @@ def factor_waterfall(ds, pids, cur, prev) -> dict:
         g, u, b = float(f["gmv"].sum()), float(f["uv"].sum()), float(f["buyers"].sum())
         return dict(gmv=g, uv=u, cvr=b / u if u else 0, aov=g / b if b else 0)
     v1, v0 = tot(cur), tot(prev)
+    n1, n0 = (cur[1] - cur[0]).days + 1, (prev[1] - prev[0]).days + 1
+    if n1 != n0 and n0:                      # 两段天数不同（如 1 天大促对比活动前 16 天）：对比期按日均折算到本期天数
+        v0["gmv"] *= n1 / n0
+        v0["uv"] *= n1 / n0
     c, _ = lmdi(v1, v0, ["uv", "cvr", "aov"], "gmv")
     names = {"uv": "访客数", "cvr": "支付转化率", "aov": "客单价"}
     items = [dict(label=names[k], value=_r(c[k], 0), tone="good" if c[k] >= 0 else "bad",
                   note=f"{v1[k] / v0[k] - 1:+.1%}" if v0[k] else "") for k in ("uv", "cvr", "aov")]
     return dict(start=dict(label=wlabel(prev), value=_r(v0["gmv"], 0)), end=dict(label=wlabel(cur), value=_r(v1["gmv"], 0)),
-                items=items, raw=dict(v0=v0, v1=v1, contrib=c))
+                items=items, raw=dict(v0=v0, v1=v1, contrib=c, scaled=n1 != n0))
 
 
 def product_waterfall(ds, pids, cur, prev, cover=0.8, max_items=6) -> dict:
@@ -489,7 +496,8 @@ def _waterfall(ds, a, pids):
                  + (f"（占变化 {raw['contrib'][k] / d:.0%}）" if d else "")
                  for i, k in zip(spec["items"], ("uv", "cvr", "aov"))]
         spec["summary"] = (f"{name_of(ds, pids)} GMV {wlabel(prev)} {raw['v0']['gmv']:,.0f} 元 → {wlabel(cur)} {raw['v1']['gmv']:,.0f} 元"
-                           f"（{d:+,.0f}，{(raw['v1']['gmv'] / raw['v0']['gmv'] - 1) if raw['v0']['gmv'] else 0:+.1%}）。" + "；".join(lines))
+                           f"（{d:+,.0f}，{(raw['v1']['gmv'] / raw['v0']['gmv'] - 1) if raw['v0']['gmv'] else 0:+.1%}）。" + "；".join(lines)
+                           + ("。两段天数不同，对比期的 GMV 和访客已按日均折算到本期天数" if raw.get("scaled") else ""))
         spec["values"] = [raw["v0"]["gmv"], raw["v1"]["gmv"], d] + [raw["v0"][k] for k in ("uv", "cvr", "aov")] + \
             [raw["v1"][k] for k in ("uv", "cvr", "aov")] + list(raw["contrib"].values()) + \
             ([raw["contrib"][k] / d for k in raw["contrib"]] if d else [])

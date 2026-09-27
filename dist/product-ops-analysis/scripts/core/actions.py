@@ -97,10 +97,15 @@ def _price_constraints(ds, pid, price, new_price, margin_after):
         approval.append(f"降幅 {drop:.1%} 超过自主调价权限 {c['price_authority']:.0%}")
     g = ds.pdays(pid)
     win = g[g.index > ds.as_of - c["min_price_window"] * DAY]
+    if "price" not in win.columns or win["price"].dropna().empty:
+        checks.append(dict(name="最低价保护", passed=None, detail="数据里没有历史到手价，未检查"))
+        return checks, approval
     min_p = float(win["price"].min()) if len(win) else price
     ok_min = new_price >= min_p - 1e-9
+    span = int((ds.as_of - g.index.min()).days) + 1 if len(g) else 0
+    days_txt = f"近 {c['min_price_window']} 天" if span >= c["min_price_window"] else f"数据内 {span} 天（不足 {c['min_price_window']} 天）"
     checks.append(dict(name="最低价保护", passed=ok_min,
-                       detail=f"新到手价 {new_price:g} 元，近 {c['min_price_window']} 天最低 {min_p:g} 元"))
+                       detail=f"新到手价 {new_price:g} 元，{days_txt}最低 {min_p:g} 元"))
     if not ok_min:
         approval.append(f"低于近 {c['min_price_window']} 天最低成交价 {min_p:g} 元")
     return checks, approval
@@ -389,7 +394,7 @@ def act_review_handling(ds, pid, cause, window):
     return dict(params=dict(rating_base=round(rating_base, 2), rating_now=round(rating_now, 2),
                             refund_rate_7d=r(rr7), issue_date=issue_date.strftime("%Y-%m-%d") if issue_date is not None else None),
                 estimate=dict(type="none"), target=ds.product(pid)["product_name"],
-                fill=dict(issue_date=_cn(issue_date) if issue_date is not None else "近期"),
+                fill=dict(issue_date=_cn(issue_date) if issue_date is not None else _cn(ds.as_of - 6 * DAY)),
                 params_text=txt)
 
 
@@ -560,15 +565,25 @@ def completeness(plan: dict) -> list[str]:
 # 方案测算：业务在对话里调整价格类方案时（改券面额、改到手价、加赠品），由这里重新算毛利与约束
 # ---------------------------------------------------------------------------
 def evaluate_plan(ds: Dataset, pid: str, coupon: float | None = None, new_price: float | None = None,
-                  gift_cost: float | None = None) -> dict:
-    """返回调整后的到手价、与竞品的价差、毛利测算和约束检查。低于毛利底线时 ok=False。"""
+                  gift_cost: float | None = None, price_now: float | None = None, cost: float | None = None) -> dict:
+    """返回调整后的到手价、与竞品的价差、毛利测算和约束检查。低于毛利底线时 ok=False。
+
+    price_now / cost：数据里没有到手价或成本价时，可由用户在对话中提供（数据里有时以数据为准）。
+    没有竞品到手价时照常测算毛利，只是不给价差。"""
+    g = ds.pdays(pid)
+    has_price = "price" in ds.available and not g.empty and pd.notna(g["price"].iloc[-1])
+    if not has_price and not price_now:
+        return dict(ok=False, reason="数据里没有到手价，请提供当前到手价后再测算")
     try:
-        g = _price_series(ds, pid)
         cost = _cost(ds, pid)
     except Skip as e:
-        return dict(ok=False, reason=str(e))
-    price = float(g["price"].iloc[-1])
-    comp = float(g["comp_price"].iloc[-1]) if g["comp_price"].iloc[-1] else None
+        if not cost:
+            return dict(ok=False, reason=str(e) + "，请提供成本价后再测算")
+        cost = float(cost)
+    price = float(g["price"].iloc[-1]) if has_price else float(price_now)
+    comp = None
+    if "comp_price" in ds.available and not g.empty and pd.notna(g["comp_price"].iloc[-1]) and g["comp_price"].iloc[-1]:
+        comp = float(g["comp_price"].iloc[-1])
     p1 = float(new_price) if new_price else price - float(coupon or 0)
     if p1 <= 0:
         return dict(ok=False, reason="调整后的到手价必须大于 0")

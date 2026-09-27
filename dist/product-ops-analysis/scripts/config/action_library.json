@@ -1,0 +1,469 @@
+{
+ "actions": [
+  {
+   "id": "replenish",
+   "name": "紧急补货",
+   "category": "库存",
+   "causes": [
+    "stockout",
+    "stockout_risk"
+   ],
+   "requires": [
+    "stock"
+   ],
+   "params": "补货量 = 基准日均销量 × (补货周期 + 安全天数) − 当前库存 − 在途量",
+   "constraints": "补货量 ≤ 0 时改为「确认在途到货时间」",
+   "due_days": 1,
+   "exec_type": "转交",
+   "owner_role": "供应链",
+   "steps": [
+    "为 {variant} 补货 {qty} 件，{lead} 天内到货"
+   ],
+   "step_by": [
+    "供应链"
+   ],
+   "track": {
+    "metric": "variant_units",
+    "days": 5
+   },
+   "estimate": "recovery",
+   "risks": [
+    "补货期间仍可能继续断货，需同时执行引导替代规格"
+   ],
+   "materials": []
+  },
+  {
+   "id": "redirect_variant",
+   "name": "引导替代规格",
+   "category": "商品页",
+   "causes": [
+    "stockout"
+   ],
+   "requires": [
+    "stock"
+   ],
+   "params": "替代规格 = 同商品有货且历史销量最高的规格；断货规格设为到货提醒或预售",
+   "constraints": "替代规格库存可售天数 ≥ 预计恢复天数",
+   "due_days": 1,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "后台商品编辑页将 {variant} 设为「到货提醒」（或预售，发货时间写 {eta}）",
+    "默认选中规格改为 {alt_variant}",
+    "在主图或详情页首屏加一句断货提示，引导选择 {alt_variant}"
+   ],
+   "track": {
+    "metric": "cvr",
+    "days": 5
+   },
+   "estimate": "recovery",
+   "risks": [
+    "顾客对替代规格接受度有限，只能挽回部分销量"
+   ],
+   "materials": [
+    "断货提示文案"
+   ]
+  },
+  {
+   "id": "pause_variant_ads",
+   "name": "暂停断货规格投放",
+   "category": "流量",
+   "causes": [
+    "stockout"
+   ],
+   "requires": [
+    "stock",
+    "channel"
+   ],
+   "params": "断货规格与商品近 7 日付费访客",
+   "constraints": "近 7 日付费访客 > 0",
+   "due_days": 1,
+   "exec_type": "转交",
+   "owner_role": "投放运营",
+   "steps": [
+    "暂停 {variant} 相关的推广计划，或把落地页默认规格改为 {alt_variant}",
+    "到货后恢复投放"
+   ],
+   "step_by": [
+    "投放运营",
+    "投放运营"
+   ],
+   "track": {
+    "metric": "uv_paid",
+    "days": 5
+   },
+   "estimate": "none",
+   "risks": [
+    "暂停后付费访客下降，需在到货后及时恢复"
+   ],
+   "materials": []
+  },
+  {
+   "id": "store_coupon",
+   "name": "店铺优惠券",
+   "category": "价格",
+   "causes": [
+    "price_disadvantage"
+   ],
+   "requires": [
+    "price",
+    "comp_price",
+    "cost_price"
+   ],
+   "params": "券面额 = 自家到手价 − 竞品到手价（取整到 5 元）",
+   "constraints": "券后毛利率 ≥ 毛利底线；降幅 ≤ 自主调价权限、不低于近 N 天最低价，否则给出风险提示",
+   "due_days": 1,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "后台「营销工具 → 优惠券」新建 {coupon} 元商品券，适用 {product}",
+    "有效期设为 {valid_until}，券后到手价 {new_price} 元",
+    "在主图角标或详情页首屏标注「领券立减 {coupon} 元」"
+   ],
+   "track": {
+    "metric": "cvr",
+    "days": 5
+   },
+   "estimate": "price",
+   "risks": [
+    "原本就会购买的顾客也会用券，形成让利"
+   ],
+   "materials": [
+    "主图角标文案"
+   ]
+  },
+  {
+   "id": "price_match",
+   "name": "直接跟价",
+   "category": "价格",
+   "causes": [
+    "price_disadvantage"
+   ],
+   "requires": [
+    "price",
+    "comp_price",
+    "cost_price"
+   ],
+   "condition": "价格劣势持续 ≥ 7 天（竞品为长期调价）",
+   "params": "新到手价 = 竞品到手价",
+   "constraints": "同店铺优惠券",
+   "due_days": 1,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "后台商品编辑页将到手价调整为 {new_price} 元",
+    "同步检查已有优惠叠加，避免价格击穿"
+   ],
+   "track": {
+    "metric": "cvr",
+    "days": 5
+   },
+   "estimate": "price",
+   "risks": [
+    "降价后难以恢复原价；可能引发竞品继续降价"
+   ],
+   "materials": []
+  },
+  {
+   "id": "gift",
+   "name": "加赠赠品",
+   "category": "价格",
+   "causes": [
+    "price_disadvantage"
+   ],
+   "requires": [
+    "price",
+    "comp_price",
+    "cost_price"
+   ],
+   "params": "赠品价值 ≈ 价差，赠品品种取自品类配置",
+   "constraints": "含赠品成本后毛利率 ≥ 毛利底线",
+   "due_days": 2,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "后台「营销工具 → 赠品」为 {product} 设置赠品：{gift}（价值 {gift_value} 元）",
+    "主图或标题突出「加赠 {gift}」"
+   ],
+   "track": {
+    "metric": "cvr",
+    "days": 5
+   },
+   "estimate": "price",
+   "risks": [
+    "赠品吸引力因人而异；需确认赠品库存"
+   ],
+   "materials": [
+    "卖点文案"
+   ]
+  },
+  {
+   "id": "bundle_discount",
+   "name": "组合装 / 多件优惠",
+   "category": "价格",
+   "causes": [
+    "price_disadvantage",
+    "aov_drop"
+   ],
+   "requires": [
+    "price",
+    "cost_price"
+   ],
+   "params": "满 2 件折扣 = 使件单价不高于竞品到手价（无竞品价时按 9 折）",
+   "constraints": "折后毛利率 ≥ 毛利底线",
+   "due_days": 2,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "后台「营销工具 → 满件折」为 {product} 设置满 2 件 {discount_text}",
+    "详情页首屏标注「2 件 {discount_text}，折合每件 {unit_price_after} 元」"
+   ],
+   "track": {
+    "metric": "aov",
+    "days": 5
+   },
+   "estimate": "price",
+   "risks": [
+    "只对愿意多买的顾客有效"
+   ],
+   "materials": [
+    "卖点文案"
+   ]
+  },
+  {
+   "id": "review_ad_budget",
+   "name": "复核投放预算",
+   "category": "流量",
+   "causes": [
+    "paid_traffic_drop"
+   ],
+   "requires": [
+    "channel"
+   ],
+   "params": "付费访客日均缺口；可挽回日均 GMV = 缺口 × 基线转化率 × 基线客单价",
+   "constraints": "—",
+   "due_days": 1,
+   "exec_type": "转交",
+   "owner_role": "投放运营",
+   "steps": [
+    "确认 {event_date} 的预算调整是否为计划内",
+    "如非计划内，恢复预算；如为计划内，评估是否用其他渠道补足每天约 {uv_gap} 个访客的缺口"
+   ],
+   "step_by": [
+    "投放运营",
+    "投放运营"
+   ],
+   "track": {
+    "metric": "uv_paid",
+    "days": 5
+   },
+   "estimate": "recovery",
+   "risks": [
+    "恢复预算会增加推广费用，需结合投入产出判断"
+   ],
+   "materials": []
+  },
+  {
+   "id": "search_optimize",
+   "name": "搜索标题与关键词优化",
+   "category": "流量",
+   "causes": [
+    "search_traffic_drop"
+   ],
+   "requires": [
+    "channel"
+   ],
+   "params": "搜索访客下滑幅度",
+   "constraints": "—",
+   "due_days": 3,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "检查 {product} 标题中的核心关键词排名是否下降",
+    "对照同类热销商品的标题，补充高热度关键词（AI 可起草建议）",
+    "检查主图点击率，必要时更换首图"
+   ],
+   "track": {
+    "metric": "uv_search",
+    "days": 7
+   },
+   "estimate": "none",
+   "risks": [
+    "搜索排名恢复需要时间"
+   ],
+   "materials": [
+    "标题关键词建议"
+   ]
+  },
+  {
+   "id": "campaign_signup",
+   "name": "活动续报 / 报名",
+   "category": "流量",
+   "causes": [
+    "campaign_end"
+   ],
+   "requires": [
+    "events"
+   ],
+   "params": "活动期与活动后日均访客差额",
+   "constraints": "距下一档活动开始 ≥ 报名提前天数（演示数据未提供活动日历时，给出报名建议并提示核对报名时间）",
+   "due_days": 3,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "查看平台近期活动日历，选择与 {product} 匹配的活动",
+    "在报名截止前提交报名（需提前约 {lead} 天）"
+   ],
+   "track": {
+    "metric": "uv",
+    "days": 7
+   },
+   "estimate": "none",
+   "risks": [
+    "活动通常要求让利，需先核算毛利"
+   ],
+   "materials": [
+    "活动报名理由"
+   ]
+  },
+  {
+   "id": "mark_known",
+   "name": "标记已知原因",
+   "category": "管理",
+   "causes": [
+    "campaign_end"
+   ],
+   "requires": [],
+   "params": "—",
+   "constraints": "—",
+   "due_days": 1,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "在预警中心将该问题卡标记为「已知原因：活动结束正常回落」"
+   ],
+   "track": {
+    "metric": "gmv",
+    "days": 7
+   },
+   "estimate": "none",
+   "risks": [
+    "如果回落幅度超过活动前水平，说明还有其他问题，需要再看"
+   ],
+   "materials": []
+  },
+  {
+   "id": "review_handling",
+   "name": "差评处理与批次排查",
+   "category": "口碑",
+   "causes": [
+    "reputation_drop"
+   ],
+   "requires": [
+    "rating"
+   ],
+   "params": "差评集中日期、评分与退款率变化",
+   "constraints": "—",
+   "due_days": 2,
+   "exec_type": "自己执行 + 转交",
+   "owner_role": "商品运营 / 供应链",
+   "steps": [
+    "筛选 {issue_date} 前后的差评，逐条回复并提供补偿方案（AI 可起草回复模板）",
+    "排查差评涉及批次的质量问题，反馈原因与处理措施",
+    "更新客服话术，统一解释口径"
+   ],
+   "step_by": [
+    "我",
+    "供应链",
+    "我"
+   ],
+   "track": {
+    "metric": "rating",
+    "days": 7
+   },
+   "estimate": "none",
+   "risks": [
+    "批次问题未解决前，差评可能持续"
+   ],
+   "materials": [
+    "差评回复模板",
+    "客服话术"
+   ]
+  },
+  {
+   "id": "boost_stock",
+   "name": "加大备货",
+   "category": "库存",
+   "causes": [
+    "growth_opportunity",
+    "stockout_risk"
+   ],
+   "requires": [
+    "stock"
+   ],
+   "params": "补货量 = 近 3 日日均销量 × (补货周期 + 安全天数) − 当前库存 − 在途量",
+   "constraints": "补货量 > 0",
+   "due_days": 2,
+   "exec_type": "转交",
+   "owner_role": "供应链",
+   "steps": [
+    "为 {variant} 加急补货 {qty} 件，{lead} 天内到货",
+    "库存不足以支撑放量前，暂不追加投放"
+   ],
+   "step_by": [
+    "供应链",
+    "我"
+   ],
+   "track": {
+    "metric": "days_of_supply",
+    "days": 5
+   },
+   "estimate": "none",
+   "risks": [
+    "热度回落后可能积压，补货量可分批"
+   ],
+   "materials": []
+  },
+  {
+   "id": "expiry_promo",
+   "name": "临期促销",
+   "category": "库存",
+   "optional": true,
+   "causes": [
+    "expiring_stock"
+   ],
+   "requires": [
+    "expiry_date"
+   ],
+   "params": "按剩余效期分档折扣",
+   "constraints": "毛利底线",
+   "due_days": 2,
+   "exec_type": "自己执行",
+   "owner_role": "商品运营",
+   "steps": [
+    "为临期批次单独设置折扣链接"
+   ],
+   "track": {
+    "metric": "units",
+    "days": 7
+   },
+   "estimate": "price",
+   "risks": [
+    "需明示效期"
+   ],
+   "materials": []
+  }
+ ],
+ "cause_names": {
+  "stockout": "规格断货",
+  "stockout_risk": "断货风险",
+  "price_disadvantage": "价格劣势",
+  "paid_traffic_drop": "付费流量减少",
+  "search_traffic_drop": "搜索流量下滑",
+  "campaign_end": "活动结束回落",
+  "reputation_drop": "口碑下滑",
+  "aov_drop": "客单价下降",
+  "growth_opportunity": "增长机会",
+  "expiring_stock": "临期库存"
+ }
+}

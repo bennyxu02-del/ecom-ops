@@ -1,0 +1,67 @@
+{
+ "id": "default",
+ "name": "通用消费品",
+ "new_product_days": 30,
+ "growth_days": 90,
+ "margin_high": 0.35,
+ "gmv_drop_yellow": 0.12,
+ "gmv_drop_red": 0.2,
+ "z_threshold": 2.0,
+ "baseline_days": 28,
+ "replenish_lead_days": 7,
+ "price_gap": 0.05,
+ "stockout_share_min": 0.15,
+ "rating_drop": 0.1,
+ "factor_priority": [
+  "stock",
+  "price",
+  "rating",
+  "campaign"
+ ],
+ "action_prefs": {
+  "price_actions": [
+   "store_coupon",
+   "gift",
+   "bundle_discount",
+   "price_match"
+  ],
+  "gifts": [
+   {
+    "name": "小赠品",
+    "cost": 5,
+    "value": 15
+   }
+  ],
+  "enabled_optional": []
+ },
+ "seasonality_note": "无",
+ "constraints": {
+  "margin_floor": 0.25,
+  "price_authority": 0.1,
+  "min_price_window": 90,
+  "safety_days": 7,
+  "campaign_signup_lead": 7
+ },
+ "review_threshold": 0.03,
+ "report": {
+  "flat_band": 0.05,
+  "cover_share": 0.8,
+  "max_items": 6,
+  "main_factor_share": 0.3,
+  "trend_weeks": 8,
+  "structure_weeks": 4,
+  "campaign_pre_days": 21,
+  "campaign_post_days": 7,
+  "campaign_main_share": 0.5,
+  "campaign_other_band": 0.05,
+  "festival_cover_days": 3,
+  "worsening_days": 3,
+  "extra_chart_limit": 3
+ },
+ "alert": {
+  "min_impact": 3000,
+  "tail_stock_only": true,
+  "recover_ratio": 0.95,
+  "ignore_silence_days": 7
+ }
+}

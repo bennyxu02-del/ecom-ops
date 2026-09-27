@@ -1,156 +1,124 @@
 ---
 name: product-ops-analysis
-description: 消费品电商的商品经营分析。当用户提供电商商品经营数据（商品日报、访客、成交、库存、价格等表格或导出文件），并希望找出异常与预警、分析某个商品为什么卖得不好（或突然变好）、得到可落地的运营方案、按固定分析剧本出报告（周度经营分析、活动复盘、单品诊断报告，带图表），或划分重点商品时使用。适用于服装、零食、3C、家居、个护等消费品；不适用于 B2B、本地生活服务、虚拟商品。
+description: 商品经营分析（消费品电商）。当用户提供商品日报或电商后台导出的表格（访客数、支付金额、销量、价格、库存等），想要：问数（上周卖了多少、哪些商品涨跌最多、渠道占比、转化率怎么算）；分析（某个商品为什么卖得不好或突然变好、店铺整体为什么下滑、哪些商品有问题）；决策测算（发券、降价、加赠品后毛利还剩多少、要多卖多少才保本、哪些商品该补货补多少）；出报告（周报、活动复盘、单品诊断报告，带图表）时使用。适用于服装、零食、3C、家居、个护等消费品；不适用于 B2B、本地生活服务、虚拟商品。
 ---
 
 # 商品经营分析
 
-这个 Skill 把资深商品运营的分析方法交给你：先定义「重点商品」，再按指标拆解树逐层找原因，用证据说话，最后从动作库给出能直接执行的方案。
+这个 Skill 把资深商品运营的经营分析方法交给你：统一的指标口径、指标拆解和归因步骤、带经营约束的动作库，以及三个报告场景的分析剧本。所有数字由脚本计算，你负责理解用户的问题、判断和表达。
 
-## 核心原则（必须遵守）
+## 必须遵守
 
-1. **计算与表达分离**：所有数字由 `scripts/run.py` 计算。你只负责判断、组织和表达，不自己算新数字，不改工具给出的数值。
-2. **方法以 references 为准**：指标口径看 `references/metrics.md`，归因步骤看 `references/attribution_sop.md`，方案只能来自动作库 `references/action_library.md`。
-3. **方案必须可落地**：每个方案都要有具体对象、具体数值、执行人及权限、执行步骤、跟踪指标、风险。凑不齐就不给，并说明「需要人工判断」。
-4. **不预测刺激类动作的效果**：优惠券、赠品、跟价只给毛利测算和保本线，不说「能多卖多少」。
-5. **如实说明缺口**：数据缺什么、哪些没检查，写进「数据局限」。
+1. **数字只来自脚本**：所有数字由 `scripts/run.py` 算出。不要自己用 pandas 或心算得出新数字，不改脚本给出的数值。口径细节很容易错（多日访客不能去重、转化率不能对每天的转化率求平均），脚本已经处理好。允许的只有单位换算（元 → 万元、0.0446 → 4.46%）和四舍五入；差额、占整体变化的比例、日均等都直接用输出里的 `diff`、`diff_share`、`cur_daily` 等字段。
+2. **口径和方法以 references 为准**：指标口径看 `references/metrics.md`，归因看 `references/attribution_sop.md`，方案只能来自 `references/action_library.md`。
+3. **不预测刺激类动作的效果**：优惠券、降价、赠品只给毛利测算和保本线，不说「能多卖多少」。
+4. **如实说明缺口**：数据缺什么、哪些没算、时间范围不完整，都要说出来。
+5. **用业务语言**：回答里不出现字段名、命令名、文件名、JSON。
+6. **不改动本 Skill 的任何文件**。公司规则不同（毛利底线、补货周期等）用 `settings` 命令调整，见下文。
 
-## 环境
+## 运行脚本
 
-需要 Python 3.9+，以及 `pandas`、`pyyaml`（缺少时先 `pip install pandas pyyaml`）。以下命令都在本 Skill 目录下执行；所有命令输出 JSON。
+- 下文 `<SKILL>` 指本文件所在的目录。在你的工作目录执行 `python <SKILL>/scripts/run.py <命令>`（`python` 不可用时用 `python3`）。数据和产出文件都写在工作目录，不要写进 `<SKILL>`。
+- **每个新对话第一次运行前，先执行 `check`**。`ok` 为 false 或 `fix` 不为空时，运行 `fix` 给出的安装命令，再重新 `check`。安装失败时按文末「不能运行代码时」处理。
+- 所有命令输出 JSON。`ok` 为 false 时按 `error` 处理；商品名匹配到多个时，把 `candidates` 给用户选。
+- 商品参数（`--product`、`--products`）可以写编号，也可以写商品名称或名称里的关键词。
+- 数据目录默认是 `workdata`，`--data workdata` 可以不写。
 
-## 第 0 步：数据适配（每次都先做）
+## 第一步：导入数据
 
-```bash
-python scripts/run.py adapt <用户的文件或目录> --out workdata
-```
-
-- 支持标准多表目录（见 `references/data_spec.md`），也支持电商后台导出的单张宽表（CSV / Excel，中文字段名）。
-- 看输出里的 `ok`：
-  - `false`：有缺失的必填字段或有歧义的字段。**把 `missing_required` 与 `ambiguous` 告诉用户，请用户确认对应列**，再用 `--map 标准字段=原列名` 重跑。不要自己猜。
-  - `true`：向用户简要说明识别结果——数据截至哪天、多少个商品、匹配到的品类配置、`missing_optional` 中哪些分析会跳过。
-- 品类没匹配到专属配置时，按通用默认配置分析，并在结论中注明「按通用标准判断」。可以用 `--category` 指定品类。
-
-## 任务 A：扫描预警（「看看有没有问题」「今天要处理什么」）
+用户给了文件（CSV / Excel，一张或多张同格式的表都行，例如按周分别导出的几张表；标准格式的几张表可以直接传它们所在的目录）：
 
 ```bash
-python scripts/run.py scan --data workdata
+python <SKILL>/scripts/run.py adapt <文件1> [<文件2> ...] --out workdata
 ```
 
-- 只汇报 `is_today` 为 true 且 `suppressed` 为 false 的问题卡，按严重度（红 > 黄 > 蓝）和影响金额排序；`suppressed` 为 true 的是影响金额低于下限的小波动，不单独汇报。
-- 先写问题（`kind` = problem），再单独写机会（`kind` = opportunity）。
-- 每张卡写一行：商品、严重度、触发了什么、持续几天、影响 GMV 约多少（估算）；有 `in_transit` 的写上在途数量和到货日。
-- `expected` 不为空的是活动后的正常回落（预期内），一句带过，不作为问题。
-- `plateau` 不为空说明规则已不再触发、但指标还没回到出问题前的水平，要提醒不是已经好了。
-- `auto_status` 为 recovered 的是已恢复的历史问题（指标已回到出问题前的水平），可以一句带过。
-- 规则说明见 `references/alert_rules.md`。注意：新品期等生命周期会放宽阈值，没报警不代表没波动，而是在正常范围内。
+- `ok` 为 false：有必填字段缺失或列名有歧义。用业务语言问用户，例如「表里的『成交金额』是支付金额吗？」，不要自己猜。确认后用 `--map 标准字段=原列名` 重跑。
+- `ok` 为 true：看 `overview`，按下一节做开场。
+- 表里没有品类列、没识别出品类，但从商品名能看出来时（例如都是充电宝、耳机），加 `--category` 重新导入：`3C数码`、`零食` 有专属判断标准，其他品类按通用标准。
+- 用户还没有数据：告诉他从电商后台导出**按天、按商品**的商品明细表，最好近 8 周。至少要有 5 列：日期、商品、访客数、支付买家数、支付金额。再带上支付件数、到手价、成本价、库存、评分、竞品到手价、上架日期，分析会更完整。列名示例见 `<SKILL>/examples/snacks_raw.csv`，数据要求见 `references/data_spec.md`。
 
-## 任务 B：单品诊断（「这个商品为什么卖得不好」）
+## 开场：告诉用户能问什么
 
-两种方式任选，结论标准相同：
+用户第一次给数据、没说要做什么，或者问「你能做什么」时，用 `adapt` 输出的 `overview` 写一段开场，不超过 10 行：
 
-**方式 1：逐步调用工具（推荐，能体现分析过程）**，严格按 `references/attribution_sop.md` 的 7 个步骤：
+1. 一句话说数据情况：日期范围、商品数、识别的品类。没匹配到品类时说明「按通用消费品标准判断」。`data_note` 不为空（数据比今天早好几天）时，说明「这周」「上周」按数据最后一天算。
+2. 按场景给 3～4 个可以直接问的问题，**用 `example_products` 里的真实商品名**。`capabilities` 里 `ok` 为 false 的场景不要推荐，缺什么数据一句带过。
+3. 说明按哪些经营规则判断（毛利底线、调价权限、补货周期，取 `business_settings`），公司规则不同可以直接告诉你。
+
+示例（商品和数字以实际数据为准）：
+
+> 已读取你的数据：16 个商品，2026-08-07 至 09-20（45 天），识别为休闲零食。你可以直接问我：
+> - 问数：「上周 GMV 多少？跌得最多的 5 个商品是哪些？」
+> - 分析：「坚果中秋礼盒这周为什么跌了 32%？」
+> - 测算：「坚果中秋礼盒给 15 元券，毛利还剩多少？」
+> - 报告：「出一份上周的周报」
+>
+> 方案测算按毛利底线 25%、单次降价不超过 10% 判断，你们的规则不同可以直接告诉我。数据里没有渠道访客，访客下滑时没法定位到具体渠道。
+
+用户一上来就问了具体问题：直接回答，不做开场，只在回答末尾用一句话提一下影响结论的数据缺口。数据截止日比今天早好几天时，也要在回答里说明时间是按数据最后一天算的。
+
+## 判断场景，再读对应的做法
+
+| 用户会怎么说 | 场景 | 先读 | 主要命令 |
+| --- | --- | --- | --- |
+| 上周卖了多少、哪些商品涨得最多、各品类占比、搜索访客占多少、转化率怎么算 | 问数 | `references/scenarios/ask_data.md` | `query`、`products` |
+| 某商品为什么掉了 / 涨了、店铺整体为什么下滑、哪些商品有问题、帮我分一下商品层级 | 分析 | `references/scenarios/analyze.md` | `diagnose`、`query`、`scan`、`tier` |
+| 发 15 元券划不划算、降到 99 元毛利还剩多少、哪些商品该补货补多少 | 决策测算 | `references/scenarios/decide.md` | `simulate`、`stock`、`settings` |
+| 出周报、复盘某个活动、出一份某商品的诊断报告 | 出报告 | `references/scenarios/report.md` 和对应剧本 | `report`、`chart`、`render` |
+
+判断不了用户要哪一种时，用一句话给出两三个选项让用户挑，不要连问多个问题。
+
+## 回答之后：顺手指一条下一步
+
+在合适的时候，结尾用一句话提示用户下一步能做什么，帮他把分析做完整：
+
+- 问数发现某商品明显下滑：「要不要看看它为什么跌了？」
+- 诊断给出价格类方案：「可以帮你测算不同券面额的毛利和保本线。」
+- 诊断发现断货：「可以帮你算一下各规格该补多少货。」
+- 一轮分析聊完：「需要的话，可以把这周的情况整理成一份周报。」
+
+一次只提一条，已经做过的不要再提。
+
+## 经营规则：用户说一句就能改
+
+毛利底线、调价权限、补货周期等规则有默认值。用户提到自己公司的规则时（例如「我们毛利底线是 30%」「补货要 10 天」），执行：
 
 ```bash
-python scripts/run.py tool get_context       --product <编号> --data workdata
-python scripts/run.py tool decompose_gmv     --product <编号> --data workdata
-python scripts/run.py tool breakdown_channels --product <编号> --data workdata
-python scripts/run.py tool breakdown_variants --product <编号> --data workdata
-python scripts/run.py tool check_factors     --product <编号> --data workdata
-python scripts/run.py tool get_events        --product <编号> --data workdata
-python scripts/run.py tool plan_actions      --product <编号> --cause <根因代码> --data workdata
+python <SKILL>/scripts/run.py settings --set 毛利底线=30% 补货周期=10 --data workdata
 ```
 
-**方式 2：一次拿到全部证据**：`python scripts/run.py diagnose --product <编号> --data workdata`。输出包含每一步的结果和一份规则初判（`rule_based_result`），你在此基础上审核、补充判断并撰写结论。
+可调的参数：毛利底线、调价权限、最低价保护天数、安全库存天数、补货周期、价差阈值、利润品毛利率。不带 `--set` 可以查看当前值，`--reset` 可以恢复默认。改动只对这份数据生效，改完告诉用户「后面的测算都按新规则算」。
 
-**诊断输出格式（五段）**：
+## 交付
 
-1. **结论**：一句话，先说 GMV 变化，再说主要原因。
-2. **贡献度**：访客数、支付转化率、客单价各贡献了多少（金额与占比）。
-3. **根因与证据**：每个根因标注把握程度（强 / 中 / 弱），证据引用具体规格、日期、数字。
-4. **方案**：1–3 个，只从 `plan_actions` 的 `candidates` 中选，逐项写出——
-   - 方案名、对象（`target`）、执行类型（自己执行 / 转交）与负责角色
-   - 关键数值（`params_text`）与测算（`estimate`：毛利变化、保本销量增幅或可挽回 GMV）
-   - 风险提示（`risk_notes`：超出调价权限或可能破价）
-   - 执行步骤（`steps`）、跟踪指标与天数（`track`）、风险（`risks`）
-   - 你选择它的理由（一两句业务语言）
-5. **数据局限**：未检查的项目与数据缺口。
-
-如果 `get_context` 返回 `within_normal_range: true`，说明变化属于正常波动：如实说明，不做下滑归因。
-
-## 任务 C：出报告（周度经营分析 / 活动复盘 / 单品诊断报告）
-
-用户要「周报」「这周生意怎么样」「复盘一下某个活动」「出一份某商品的诊断报告」时使用。三个场景各有一份**分析剧本**（`references/playbooks/`），写清楚了给谁看、要回答的问题、固定章节、每章的计算与图表、判断标准和结论句式。**先读剧本和写作规则（`references/playbooks/writing_rules.md`）再写。**
-
-1. 生成数据包（平台已算好每章的数据、判断标签和必备图）：
-
-```bash
-python scripts/run.py report --scene weekly   --data workdata --pack report_pack.json      # 周度经营分析（可加 --week-end、--target 月度目标）
-python scripts/run.py campaigns --data workdata                                            # 先列出可复盘的活动
-python scripts/run.py report --scene campaign --campaign <活动编号> --data workdata --pack report_pack.json
-python scripts/run.py report --scene product  --product <编号> --data workdata --pack report_pack.json
-```
-
-2. 按剧本写 Markdown 报告：章节标题与顺序照数据包里的 `heading`；每章第一句加粗写结论；有必备图的章节在结论下单独一行写 `[图表:编号]`，图下写解读。
-
-3. 需要补充图时（最多 3 张），**只能用图表工具**，只传参数，不要自己写画图代码、不要传数字：
-
-```bash
-python scripts/run.py chart --pack report_pack.json --type dual_line --products S01 --metrics rating,refund_rate \
-    --mark-date 2026-09-12 --mark-text 差评集中 --title "差评出现后评分下滑、退款率翻倍" --data workdata
-```
-
-返回 `chart_id` 和数据摘要：把 `[图表:chart_id]` 写进正文，按摘要写解读；返回 `error` 时按说明改参数重试。图表类型与参数见 `references/chart_library.md`。
-
-4. 核对数字并导出带图表的 HTML 报告：
-
-```bash
-python scripts/run.py render report.md --pack report_pack.json --out report.html
-```
-
-`unmatched_numbers` 不为空时，把这些数字改为引用数据包或图表摘要里的数，再运行一次。把 HTML 交给用户（图表可以悬停查看）。
-
-## 任务 D：商品分层
-
-```bash
-python scripts/run.py tier --data workdata
-```
-
-按爆品 / 潜力品 / 利润品 / 长尾品汇总，说明每层的判定规则（`references/tiering.md`）和生命周期对预警阈值的影响。
-
-## 交付前自检
-
-把要交付的文字存成文件，运行：
-
-```bash
-python scripts/run.py verify <文件> --product <编号> --data workdata     # 诊断（对话式回答）
-python scripts/run.py render <报告.md> --pack report_pack.json          # 报告（同时导出 HTML）
-```
-
-`unmatched_numbers` 不为空时，删除或改正这些数字后再交付。
-
-## 不能运行代码时
-
-如果当前环境无法执行 Python：按 `references/metrics.md` 的口径和 `references/decomposition_tree.md` 的公式逐步手算并展示过程，在结论开头声明「未使用脚本校验」；方案仍只能从 `references/action_library.md` 中选择，参数按其中公式计算。
+- **文字回答**：先给结论，再给依据；数字只引用命令结果，并写清时间范围和对比期。回答里有较多数字时（诊断、店铺分析、测算），交付前把回答存成文本文件，用 `verify` 核对：它会拿本次对话里所有命令算出的结果来比对，商品名里的数字（如 20000mAh）不算。`unmatched_numbers` 不为空时，把这些数字改为引用计算结果，或者删掉。
+- **报告**：用 `render` 导出 HTML，**明确把 HTML 文件交给用户**，不要只说「已生成」。用户修改后重新导出，再交一次最新文件。用户想要在线文档时，可以把报告的 Markdown 内容转成当前环境支持的文档格式。
+- **表格**：用户要明细数据时，可以把 `query` 的结果整理成表格文件交付。
 
 ## 写作要求
 
-- 面向商品运营，用业务语言；不出现字段名、命令名、工具名。
-- 百分比保留一位小数，金额用「元」，日期写「9 月 17 日」或「09-17」。
-- 先给结论，再给依据。
+- 变化幅度保留一位小数（如「下降 14.2%」）；转化率、退款率这类本身很小的比率保留两位小数（如「3.64%」）。金额用「元」（大数用「万元」），日期写「9 月 17 日」或「09-17」。
+- 比率类指标（转化率、退款率、毛利率）的变化写成「从 4.58% 降到 4.46%，下降 0.12 个百分点」（百分点取输出里的 `diff`），不要写成「下降 2.6%」造成误解。
+- 方案里执行人写「我」的，指用户本人，写成「商品运营」或「你」。
+- 结论要具体到商品、日期和数字，不说「整体表现良好」这类空话。
+
+## 不能运行代码时
+
+如果当前环境无法执行 Python，或者依赖装不上：按 `references/metrics.md` 的口径和 `references/decomposition_tree.md` 的公式手算，并展示过程，在结论开头声明「未使用脚本校验」。方案仍然只能从 `references/action_library.md` 中选择，参数按其中的公式计算。
 
 ## 参考文件
 
 | 文件 | 内容 |
 | --- | --- |
+| `references/scenarios/*.md` | 四个场景的具体做法：问数、分析、决策测算、出报告 |
 | `references/metrics.md` | 指标字典与口径 |
 | `references/decomposition_tree.md` | 指标拆解树与贡献度算法 |
-| `references/tiering.md` | 商品分层与生命周期 |
-| `references/alert_rules.md` | 预警规则、分级、合并降噪 |
 | `references/attribution_sop.md` | 归因步骤与根因代码 |
 | `references/action_library.md` | 动作库与经营约束 |
-| `references/category_profiles.md` | 品类配置（通用默认 + 示例品类）与新增品类方法 |
-| `references/data_spec.md` | 标准数据模型、最小字段、字段同义词、缺数据时的降级 |
+| `references/tiering.md` | 商品分层与生命周期 |
+| `references/alert_rules.md` | 异常判断规则（「哪些商品有问题」用） |
+| `references/category_profiles.md` | 品类配置 |
+| `references/data_spec.md` | 数据要求、字段同义词、缺数据时的影响 |
 | `references/playbooks/*.md` | 三个报告场景的分析剧本与写作规则 |
-| `references/chart_library.md` | 图表库：图表类型、指标与参数 |
-| `examples/` | 标准格式示例（3C）与后台导出宽表示例（零食） |
+| `references/chart_library.md` | 图表类型与参数 |
+| `examples/` | 标准格式示例（3C）与后台导出表示例（零食） |

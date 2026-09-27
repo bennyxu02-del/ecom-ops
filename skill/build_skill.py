@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -72,7 +73,7 @@ def alerts_md():
     a = y("alert_rules.yaml")
     return "# 预警规则\n\n近 7 日对比前 7 日（R01）；近 3 日日均对比前 28 天基线（R02 / R03 / R08，基线剔除大促日，z 值标准差下限为均值的 5%）。\n\n" + \
         table(["规则", "名称", "类型", "触发条件", "严重度"], [[x["id"], x["name"], x["type"], x["condition"], x["severity"]] for x in a["rules"]]) + \
-        "\n\n## 附加规则\n\n" + "\n".join(f"- {x}" for x in a["extra"]) + "\n\n## 合并与降噪\n\n" + "\n".join(f"- {x}" for x in a["merge"]) + "\n"
+        "\n\n## 附加规则\n\n" + "\n".join(f"- {x}" for x in a["extra"]) + "\n\n## 合并与降噪\n\n" + "\n".join(f"- {x}" for x in a["merge"] if not any(w in x for w in ("飞书", "待办", "处理状态"))) + "\n"
 
 
 def actions_md():
@@ -86,7 +87,7 @@ def actions_md():
         "\n\n## 根因代码\n\n" + table(["代码", "含义"], [[k, v] for k, v in lib["cause_names"].items()]) + \
         f"""
 
-## 经营约束（默认值，可在品类配置中覆盖；落地时按公司规则设置）
+## 经营约束（默认值；用户说出自己公司的规则后，用 `settings` 命令调整，不改文件）
 
 - 毛利底线：价格类方案执行后毛利率 ≥ {c['margin_floor']:.0%}，否则不输出
 - 自主调价权限：单次到手价降幅 ≤ {c['price_authority']:.0%}，超出时在方案上提示风险
@@ -120,7 +121,7 @@ def profiles_md():
     return "# 品类配置\n\n方法主体通用，品类差异只写在配置里。数据中的品类匹配不到专属配置时使用通用默认，并在结论中注明。\n\n" + \
         table(["参数"] + [ps[p].get("name", p) for p in order], rows) + \
         "\n\n品类匹配关键词：" + "；".join(f"{ps[p]['name']}：{'、'.join(ps[p].get('match', []))}" for p in order if p != "default") + \
-        "\n\n## 新增一个品类\n\n复制 `scripts/config/category_profiles/3c.yaml`，按新品类修改上表参数与 `match` 关键词。可以先让 AI 起草（例如母婴需注意效期与合规），**由懂行的人审核后生效**。\n"
+        "\n\n## 新增一个品类\n\n日常使用不需要改任何文件：数据里的品类匹配不到时按通用标准判断；毛利底线、调价权限、补货周期等经营参数，用户在对话里说一句，用 `settings` 命令调整即可。\n\n如果要长期沉淀一个新品类的判断标准：复制 `scripts/config/category_profiles/3c.json`，按新品类修改上表参数与 `match` 关键词，**由懂行的人审核后生效**。\n"
 
 
 def chart_md():
@@ -155,6 +156,13 @@ def build():
     shutil.copy(ROOT / "skill" / "run.py", DIST / "scripts" / "run.py")
     shutil.copytree(ROOT / "core", DIST / "scripts" / "core", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(M, DIST / "scripts" / "config")
+    # 配置转成 JSON：运行时不依赖 PyYAML（通用 Agent 的环境不一定装了）
+    for f in (DIST / "scripts" / "config").rglob("*.yaml"):
+        f.with_suffix(".json").write_text(json.dumps(yaml.safe_load(f.read_text(encoding="utf-8")), ensure_ascii=False, indent=1, default=str),
+                                          encoding="utf-8")
+        f.unlink()
+    if (ROOT / "skill" / "scenarios").exists():
+        shutil.copytree(ROOT / "skill" / "scenarios", DIST / "references" / "scenarios")
     (DIST / "scripts" / "core" / "assets").mkdir(exist_ok=True)
     shutil.copy(ROOT / "web" / "src" / "lib" / "reportCharts.js", DIST / "scripts" / "core" / "assets" / "report_charts.js")
     # 示例数据：3C 标准格式近 60 天；零食后台导出宽表
