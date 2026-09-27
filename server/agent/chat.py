@@ -42,9 +42,9 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
             text = f"（模拟模型）已收到：{history[-1]['content'][:60]}"
             if not preset and re.search(r"怎么|建议|要不要|安排|如何|待办|记一下", history[-1]["content"]):
                 text += ("\n\n建议先和供应链确认到货时间，再在详情页加一句到货提示。\n"
-                         '<todo>{"name": "确认到货并更新提示", "steps": [{"text": "确认白色款能否提前到货", "by": "供应链"}, '
-                         '{"text": "详情页首屏加到货时间提示", "by": "我"}], "track_metric": "cvr", "track_days": 7, '
-                         '"note": "白色断货拖累转化率"}</todo>')
+                         '<todo>{"name": "确认到货并更新提示", "steps": [{"text": "确认白色款在途 3,200 件能否在 9 月 22 日前到仓，能否提前 1–2 天，反馈最终到仓日期", "by": "供应链"}, '
+                         '{"text": "详情页首屏加白色款到货时间提示，引导先买黑色", "by": "我"}], "track_metric": "cvr", "track_days": 7, '
+                         '"note": "白色款 9 月 17 日起断货，平时占销量 40%，转化率因此下滑"}</todo>')
         else:
             for _ in range(MAX_CALLS + 1):
                 msg = chat(msgs, tools=tools.TOOL_SPECS)

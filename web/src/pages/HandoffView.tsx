@@ -47,7 +47,7 @@ export default function HandoffView() {
         {!closed && h.status !== "pending" && (
           <>
             {h.status === "question" && <div className="verify bad" style={{ marginTop: 12 }}>你的疑问已发给发起人，等待回复：{h.note}</div>}
-            <Input.TextArea rows={2} placeholder="处理说明，或写下你的疑问（提出疑问时必填）" value={note} onChange={e => setNote(e.target.value)} style={{ marginTop: 12 }} />
+            <Input.TextArea rows={2} placeholder="处理结果（如时间、数量、排查结论），或写下你的疑问（提出疑问时必填）" value={note} onChange={e => setNote(e.target.value)} style={{ marginTop: 12 }} />
             <Space wrap style={{ marginTop: 10 }}>
               <Button type="primary" loading={busy === "done"} onClick={() => respond("done")}>已完成</Button>
               <Button loading={busy === "question"} onClick={() => respond("question")}>有疑问</Button>

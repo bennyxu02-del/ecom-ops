@@ -86,8 +86,42 @@ def build_plan(name: str, pid: str, title: str, steps: list, track_metric: str |
     return core_actions.annotate(plan)
 
 
-def preview(name: str, pid: str, plan: dict, context: dict | None, due: str) -> list[dict]:
-    return collab.draft_handoffs(name, pid, plan, context or {}, due)
+_CHATTER = re.compile(r"^(好的|好|没问题|可以|收到|明白)[，,。!！]|这就为你|为你建|帮你建")
+
+
+def enrich_context(name: str, pid: str, context: dict | None, card_id: str | None = None) -> dict:
+    """协同消息的背景由平台补齐：诊断结论与证据、当前预警，保证同事看得懂发生了什么。
+    运营或 AI 写的背景（备注 / 对话里的说明）保留在前；寒暄类的句子丢弃。"""
+    from core import sop
+    from .agent import diagnose
+    ctx = dict(context or {})
+    summary = (ctx.get("summary") or "").strip()
+    if _CHATTER.search(summary) or len(summary) < 6:
+        summary = ""
+    ds = data.ds_of(name)
+    card = data.card_for(name, pid, today_only=True)
+    cached = state.cache_get(diagnose.cache_key(name, pid))
+    res = cached["result"] if cached else sop.run(ds, pid, card=card, tiers=data.tiers(name))[1]
+    evidence = [e for e in ctx.get("evidence") or [] if e]
+    if not evidence:
+        for rc in res.get("root_causes") or []:
+            evidence += [e.get("text") if isinstance(e, dict) else str(e) for e in rc.get("evidence") or []]
+    if card:
+        sev = {"red": "红", "yellow": "黄", "blue": "蓝"}.get(card["severity"], "")
+        evidence.insert(0, f"{card['first_date'][5:]} 起{sev}色预警：{'、'.join(card['rule_names'])}")
+    seen, ev = set(), []
+    for e in evidence:
+        if e and e not in seen:
+            seen.add(e)
+            ev.append(e)
+    diag = (res.get("summary") or "").strip()
+    ctx["summary"] = summary + ("" if not diag or diag in summary else ("\n" if summary else "") + diag)
+    ctx["evidence"] = ev[:4]
+    return ctx
+
+
+def preview(name: str, pid: str, plan: dict, context: dict | None, due: str, card_id: str | None = None) -> list[dict]:
+    return collab.draft_handoffs(name, pid, plan, enrich_context(name, pid, context, card_id), due)
 
 
 def create(name: str, pid: str, *, title: str, steps: list, due_date: str | None = None, track_metric: str | None = None,
@@ -105,6 +139,7 @@ def create(name: str, pid: str, *, title: str, steps: list, due_date: str | None
     ctx = dict(context or {})
     if not ctx.get("summary") and note:
         ctx["summary"] = note
+    ctx = enrich_context(name, pid, ctx, card_id)
     aid = state.add_action(ds=name, card_id=card_id, product_id=pid, product_name=ds.product(pid)["product_name"],
                            action_id=p.get("action_id"), name=p["name"], cause=p.get("cause"), cause_name=p.get("cause_name"),
                            target=p.get("target"), plan_json=json.dumps(p, ensure_ascii=False), exec_type=p.get("exec_type"),
@@ -306,9 +341,13 @@ SUGGEST_RULE = """
 2. 你的回答建议运营去做具体的事情。
 只是解释原因、回答数据问题时，不要附卡片。卡片格式严格如下：
 <todo>{"name": "待办名称，15 字以内", "steps": [{"text": "具体步骤", "by": "我|供应链|投放运营"}], "track_metric": "gmv|cvr|uv|aov|units|rating", "track_days": 7, "due_days": 3, "note": "一句话背景，引用对话里核对过的数字"}</todo>
-- 步骤 1–4 步，每步写清做什么、对象是谁。负责人：补货、批次质量问题归「供应链」；推广投放归「投放运营」；其余（含调价）归「我」。
+- 步骤 1–4 步。负责人：补货、批次质量问题归「供应链」；推广投放归「投放运营」；其余（含调价）归「我」。
+- 分给同事的步骤会原样发给对方，要写成直接对对方说的话：做什么、针对哪个商品 / 规格 / 批次、要反馈什么结果。
+  好的写法：「排查 9 月 12 日前后入库批次的结块、发酸问题，反馈问题批次号、涉及库存量和处理办法」；
+  不要写「转交供应链」「联系供应链」这类话，也不要用「我」「你」以外的代称。
+- note 用一两句话说清发生了什么、关键数字是多少（只用对话里平台核对过的数字），同事会先看到这段背景。
 - 跟踪指标选和刚才讨论的问题最相关的指标；运营没说截止就用 3 天。
-- 卡片内容不要在正文里重复。"""
+- 卡片内容不要在正文里重复；卡片之外的正文不要写「好的，这就为你建待办」这类话。"""
 
 
 def split_suggestion(text: str, name: str) -> tuple[str, dict | None]:
@@ -346,7 +385,8 @@ def normalize_draft(raw: dict, name: str) -> dict | None:
 DRAFT_SYSTEM = """你负责把一段商品运营对话整理成一条待办。只输出一个 JSON 对象，不要其他文字：
 {"name": "待办名称，15 字以内", "steps": [{"text": "具体步骤", "by": "我|供应链|投放运营"}], "track_metric": "gmv|cvr|uv|aov|units|rating", "track_days": 7, "due_days": 3, "note": "一句话说明为什么要做（引用对话中的数字）"}
 - 步骤 1–4 步，来自对话内容，不要编造对话里没有的数字。
-- 负责人：补货、批次质量问题归「供应链」；推广投放归「投放运营」；其余（含调价）归「我」。"""
+- 负责人：补货、批次质量问题归「供应链」；推广投放归「投放运营」；其余（含调价）归「我」。
+- 分给同事的步骤会原样发给对方，写成直接对对方说的话：做什么、针对哪个商品 / 规格 / 批次、要反馈什么结果；不要写「转交供应链」这类话。"""
 
 
 def _heuristic(reply: str, question: str, name: str) -> dict:

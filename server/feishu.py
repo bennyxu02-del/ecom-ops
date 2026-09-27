@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import threading
 import time
@@ -179,7 +180,11 @@ def build_card(h: dict, link: str | None) -> dict:
     lines = [x for x in body.split("\n") if not x.startswith("处理入口：")]
     if lines and lines[0].startswith("【"):
         lines = lines[1:]
-    elements = [{"tag": "div", "text": {"tag": "lark_md", "content": _md("\n".join(lines).strip())}}]
+    out = []
+    for x in lines:                       # 「【背景】」等小标题在卡片里加粗
+        m = re.match(r"^【(.+?)】(.*)$", x)
+        out.append(f"**{m.group(1)}**" + (f"：{_md(m.group(2))}" if m.group(2) else "") if m else _md(x))
+    elements = [{"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(out).strip()}}]
     status = "发起人已确认完成" if h.get("proxy") else STATUS_TEXT.get(h["status"], h["status"])
     line = f"**当前状态：{status}**" + (f"　截止 {h['due']}" if h.get("due") and not closed else "")
     if h.get("note") and h["status"] == "question":
@@ -190,12 +195,12 @@ def build_card(h: dict, link: str | None) -> dict:
         actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "已完成"}, "type": "primary",
                         "value": {"hid": h["id"], "status": "done"}})
         if link:
-            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "有疑问"}, "type": "default", "url": link})
+            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "有疑问 / 补充说明"}, "type": "default", "url": link})
     elif link:
         actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "查看详情"}, "type": "default", "url": link})
     if actions:
         elements.append({"tag": "action", "actions": actions})
     template = "grey" if h["status"] == "cancelled" else "green" if closed else "orange"
     return {"config": {"wide_screen_mode": True, "update_multi": True},
-            "header": {"template": template, "title": {"tag": "plain_text", "content": "【协同请求】" + (a.get("product_name") or "")}},
+            "header": {"template": template, "title": {"tag": "plain_text", "content": "【协同请求】" + (a.get("product_name") or "") + (f" · {a['name']}" if a.get("name") else "")}},
             "elements": elements}

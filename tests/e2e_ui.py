@@ -160,7 +160,7 @@ async def main():
         hid = await pg.evaluate("fetch('/api/handoffs?ds=snacks').then(r=>r.json()).then(x=>x[0].id)")
         await pg.goto(B + f"/#/h/{hid}")
         await pg.wait_for_selector(".hv-msg")
-        await pg.get_by_placeholder("处理说明").fill("批次 B0912 已隔离，其余批次抽检正常")
+        await pg.get_by_placeholder("处理结果").fill("批次 B0912 已隔离，其余批次抽检正常")
         await pg.get_by_role("button", name="已完成").click()
         await pg.wait_for_selector(".verify.ok")
         await shot("08c_handoff_view")

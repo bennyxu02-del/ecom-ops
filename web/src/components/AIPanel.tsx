@@ -120,15 +120,16 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
   };
 
   const setMsg = (idx: number, f: (m: Msg) => Msg) => setMsgs(ms => ms.map((m, i) => (i === idx ? f(m) : m)));
-  const todoContext = (m: Msg) => ({ summary: (m.text.split(/(?<=[。！？\n])/)[0] || "").replace(/[*#`]/g, "").trim().slice(0, 140) || undefined });
+  // 背景：AI 在待办卡片里写的说明（平台还会自动补上诊断结论、数据和预警）
+  const todoContext = (d?: TodoDraft | null) => ({ summary: d?.note || undefined });
   const toTodo = async (idx: number) => {
     const m = msgs[idx];
-    if (m.todo) { setTodoFor({ idx, draft: m.todo, context: todoContext(m) }); return; }
+    if (m.todo) { setTodoFor({ idx, draft: m.todo, context: todoContext(m.todo) }); return; }
     setMsg(idx, x => ({ ...x, drafting: true }));
     try {
       const upto = history.current.slice(0, history.current.findIndex(h => h.role === "assistant" && h.content === m.text) + 1);
       const draft = await api<TodoDraft>(`/api/chat/${pid}/todo-draft`, { method: "POST", body: { messages: upto.length ? upto : [{ role: "user", content: m.q || "" }], reply: m.text } });
-      setTodoFor({ idx, draft, context: todoContext(m) });
+      setTodoFor({ idx, draft, context: todoContext(draft) });
     } catch (e: any) { message.error(e.message); } finally { setMsg(idx, x => ({ ...x, drafting: false })); }
   };
 

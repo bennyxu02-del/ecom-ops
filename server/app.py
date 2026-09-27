@@ -350,7 +350,7 @@ def api_todo_preview(body: TodoCreate, ds: str = DS):
     if not ctx.get("summary") and body.note:
         ctx["summary"] = body.note
     due = body.due_date or todos.default_due(name, int(plan.get("due_days") or todos.DEFAULT_DUE_DAYS))
-    return notify.preview(todos.preview(name, body.product_id, plan, ctx, due))
+    return notify.preview(todos.preview(name, body.product_id, plan, ctx, due, body.card_id))
 
 
 @app.post("/api/todos", tags=["待办中心"], summary="新建待办（采纳 AI 方案 / 对话生成 / 手动新建）")

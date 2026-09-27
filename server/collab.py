@@ -34,21 +34,35 @@ def _loads(s, default):
 # 协同卡片的文字
 # ---------------------------------------------------------------------------
 def compose(role: str, plan: dict, step_idx: list[int], context: dict, product_name: str,
-            due: str, link: str | None) -> str:
-    summary = (context or {}).get("summary") or ""
+            due: str, link: str | None, sender: str | None = None) -> str:
+    """发给同事的协同消息：谁发起、出了什么事（带数据）、要对方做什么、要反馈什么、截止、整体分工。"""
+    summary = ((context or {}).get("summary") or "").strip()
     evidence = [e for e in (context or {}).get("evidence") or [] if e][:4]
     steps = plan.get("steps") or []
-    lines = [f"【协同请求】{product_name} · {plan.get('name', '')}", ""]
-    if summary:
-        lines += [f"情况：{summary}", ""]
-    if evidence:
-        lines += ["数据依据："] + [f"· {x}" for x in evidence] + [""]
-    lines += [f"需要{role}协助："]
+    owners = plan.get("step_owners") or []
+    lines = [f"【协同请求】{product_name} · {plan.get('name', '')}",
+             f"{sender or '商品运营'}发起，需要{role}协助完成下面的事项。", ""]
+    if summary or evidence:
+        lines.append("【背景】")
+        if summary:
+            lines.append(summary)
+        lines += [f"· {x}" for x in evidence]
+        lines.append("")
+    lines.append("【需要你做的】")
     lines += [f"{n}. {steps[i]}" for n, i in enumerate(step_idx, 1) if i < len(steps)]
-    lines += ["", f"希望在 {due} 前完成，完成后点「已完成」，有问题点「有疑问」。"]
+    lines += ["完成后点「已完成」；需要补充结果（如时间、数量、排查结论）或有问题，点「有疑问 / 补充说明」。", "",
+              f"【截止】{due}"]
+    rest = [(o, t) for k, (o, t) in enumerate(zip(owners, steps)) if k not in step_idx]
+    if rest:
+        lines += ["", "【整体分工】"]
+        lines += [f"· {'我（' + (sender or '商品运营') + '）' if o == SELF else o}：{t}" for o, t in rest]
     if link:
         lines += ["", f"处理入口：{link}"]
     return "\n".join(lines)
+
+
+def _sender() -> str | None:
+    return ((state.get_setting("feishu_roles", {}) or {}).get("我") or {}).get("name")
 
 
 def draft_handoffs(name: str, pid: str, plan: dict, context: dict, due: str) -> list[dict]:
@@ -56,7 +70,7 @@ def draft_handoffs(name: str, pid: str, plan: dict, context: dict, due: str) -> 
     core_actions.annotate(plan)
     product_name = data.ds_of(name).product(pid)["product_name"]
     return [dict(role=h["role"], steps=h["steps"], due=due,
-                 message=compose(h["role"], plan, h["steps"], context, product_name, due, None))
+                 message=compose(h["role"], plan, h["steps"], context, product_name, due, None, _sender()))
             for h in plan.get("handoffs") or []]
 
 
@@ -71,7 +85,7 @@ def create_for_action(name: str, action_row: int, pid: str, plan: dict, context:
                                 history_json=json.dumps([dict(t=time.time(), status="pending", by="系统", note="创建待办")],
                                                         ensure_ascii=False))
         link = f"{base_url.rstrip('/')}/#/h/{hid}" if base_url else None
-        state.update_handoff(hid, message=compose(h["role"], plan, h["steps"], context, product_name, due, link))
+        state.update_handoff(hid, message=compose(h["role"], plan, h["steps"], context, product_name, due, link, _sender()))
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +157,7 @@ def set_due(action_row: int, due: str):
             continue
         msg = (h.get("message") or "")
         if h.get("due"):
-            msg = msg.replace(f"在 {h['due']} 前", f"在 {due} 前")
+            msg = msg.replace(f"【截止】{h['due']}", f"【截止】{due}").replace(f"在 {h['due']} 前", f"在 {due} 前")
         state.update_handoff(h["id"], due=due, message=msg)
 
 
