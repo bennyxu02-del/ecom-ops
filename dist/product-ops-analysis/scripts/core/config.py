@@ -50,6 +50,12 @@ def tree() -> dict:
     return _load("tree.yaml")
 
 
+@lru_cache(maxsize=None)
+def calendar() -> dict:
+    p = methods_dir() / "calendar.yaml"
+    return _load("calendar.yaml") if p.exists() else {"festivals": []}
+
+
 def read_text(name: str) -> str:
     return (methods_dir() / name).read_text(encoding="utf-8")
 

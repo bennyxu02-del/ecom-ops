@@ -54,6 +54,25 @@ export default function Methods() {
         <div className="md mt"><h3>附加与合并规则</h3><ul>{[...m.alert_rules.extra, ...m.alert_rules.merge].map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
       </>) },
     { key: "sop", label: "归因 SOP", children: <Markdown text={m.sop} /> },
+    { key: "playbooks", label: "报告分析剧本", children: (
+      <Tabs size="small" tabPosition="left" items={[
+        { key: "weekly", label: "周度经营分析", children: <Markdown text={m.playbooks.weekly} /> },
+        { key: "campaign", label: "活动复盘", children: <Markdown text={m.playbooks.campaign} /> },
+        { key: "product", label: "单品诊断", children: <Markdown text={m.playbooks.product} /> },
+        { key: "writing", label: "写作规则", children: <Markdown text={m.playbooks.writing} /> },
+      ]} />) },
+    { key: "charts", label: "图表库", children: (
+      <>
+        <p className="sec">报告里的每张图都由图表工具生成：AI 只传参数（画什么图、哪些商品、哪些指标、时间范围、标注），数据由平台取，参数不合格会被退回。平台、对话和打包出去的 Skill 用的是同一个工具。</p>
+        <Table size="small" rowKey="type" pagination={false} dataSource={m.chart_library} columns={[
+          { title: "图表", dataIndex: "name", render: t => <b>{t}</b>, width: 110 },
+          { title: "类型", dataIndex: "type", render: t => <code>{t}</code>, width: 120 },
+          { title: "用来说明什么", dataIndex: "use" },
+          { title: "AI 可以填的参数", dataIndex: "params", render: t => <span className="sec">{t}</span> },
+        ]} />
+        <div className="sec-title" style={{ marginTop: 16 }}>工具说明书（给 AI 看的）</div>
+        <pre className="code-block">{JSON.stringify(m.chart_tool, null, 2)}</pre>
+      </>) },
     { key: "actions", label: "动作库", children: (
       <Table size="small" rowKey="id" pagination={false} dataSource={m.action_library.actions} scroll={{ x: 900 }} columns={[
         { title: "动作", dataIndex: "name", width: 150, render: (t, a: any) => <><b>{t}</b>{a.optional && <div className="muted small">品类启用</div>}</> },

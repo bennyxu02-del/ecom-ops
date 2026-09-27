@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 
+from core import charts as C
 from core import sop, tools
 
 from .. import data, llm_client, state, todos
@@ -37,6 +38,7 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
     sysmsg = prompts.chat_system(ds, pid, diag_res) + ("" if preset else "\n" + todos.SUGGEST_RULE)
     msgs = [{"role": "system", "content": sysmsg}] + history
     steps, text = [], ""
+    book = C.ChartBook(2)
     try:
         if mode == "mock":
             text = f"（模拟模型）已收到：{history[-1]['content'][:60]}"
@@ -47,7 +49,7 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
                          '"note": "白色款 9 月 17 日起断货，平时占销量 40%，转化率因此下滑"}</todo>')
         else:
             for _ in range(MAX_CALLS + 1):
-                msg = chat(msgs, tools=tools.TOOL_SPECS)
+                msg = chat(msgs, tools=tools.TOOL_SPECS + ([] if preset else [C.TOOL_SPEC]))
                 tcs = msg.get("tool_calls") or []
                 if not tcs:
                     text = msg.get("content") or ""
@@ -59,13 +61,18 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
                         args = json.loads(tc["function"].get("arguments") or "{}")
                     except json.JSONDecodeError:
                         args = {}
-                    args["product_id"] = pid
-                    try:
-                        result = tools.call(ds, fn, args, tiers=data.tiers(name))
-                    except Exception as e:  # noqa: BLE001
-                        result = {"error": str(e)}
-                    steps.append(dict(tool=fn, result=result))
-                    yield dict(type="step", tool=fn, summary=sop.summarize(fn, result))
+                    if fn == "draw_chart":
+                        args.setdefault("products", [pid])
+                        result = book.draw_extra(ds, args)
+                        yield dict(type="step", tool=fn, summary=f"画图：{result['title']}" if "chart_id" in result else "图表参数有误，已退回")
+                    else:
+                        args["product_id"] = pid
+                        try:
+                            result = tools.call(ds, fn, args, tiers=data.tiers(name))
+                        except Exception as e:  # noqa: BLE001
+                            result = {"error": str(e)}
+                        steps.append(dict(tool=fn, result=result))
+                        yield dict(type="step", tool=fn, summary=sop.summarize(fn, result))
                     msgs.append({"role": "tool", "tool_call_id": tc.get("id", fn),
                                  "content": json.dumps(result, ensure_ascii=False, default=str)[:6000]})
     except llm_client.LLMError as e:
@@ -78,6 +85,10 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
     allowed = set()
     for s in steps:
         verify.collect(s["result"], allowed)
+    for v in book.values():
+        verify.collect(v, allowed)
+    used = set(C.PLACEHOLDER.findall(text))
+    chart_out = {k: v for k, v in book.public().items() if k in used}
     if diag_res:
         verify.collect(diag_res, allowed)
     if plan:
@@ -85,4 +96,4 @@ def run(name: str, pid: str, messages: list[dict], preset: str | None = None, pl
     bad = sorted(set(verify.check_text(text, allowed))) if not preset else []
     if key and text and mode == "live":
         state.cache_put(key, dict(content=text))
-    yield dict(type="result", text=text, unmatched_numbers=bad, todo=suggestion)
+    yield dict(type="result", text=text, unmatched_numbers=bad, todo=suggestion, charts=chart_out)

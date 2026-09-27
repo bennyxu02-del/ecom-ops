@@ -1,6 +1,6 @@
 ---
 name: product-ops-analysis
-description: 消费品电商的商品经营分析。当用户提供电商商品经营数据（商品日报、访客、成交、库存、价格等表格或导出文件），并希望找出异常与预警、分析某个商品为什么卖得不好（或突然变好）、得到可落地的运营方案、生成经营周报，或划分重点商品时使用。适用于服装、零食、3C、家居、个护等消费品；不适用于 B2B、本地生活服务、虚拟商品。
+description: 消费品电商的商品经营分析。当用户提供电商商品经营数据（商品日报、访客、成交、库存、价格等表格或导出文件），并希望找出异常与预警、分析某个商品为什么卖得不好（或突然变好）、得到可落地的运营方案、按固定分析剧本出报告（周度经营分析、活动复盘、单品诊断报告，带图表），或划分重点商品时使用。适用于服装、零食、3C、家居、个护等消费品；不适用于 B2B、本地生活服务、虚拟商品。
 ---
 
 # 商品经营分析
@@ -75,13 +75,37 @@ python scripts/run.py tool plan_actions      --product <编号> --cause <根因�
 
 如果 `get_context` 返回 `within_normal_range: true`，说明变化属于正常波动：如实说明，不做下滑归因。
 
-## 任务 C：经营周报
+## 任务 C：出报告（周度经营分析 / 活动复盘 / 单品诊断报告）
+
+用户要「周报」「这周生意怎么样」「复盘一下某个活动」「出一份某商品的诊断报告」时使用。三个场景各有一份**分析剧本**（`references/playbooks/`），写清楚了给谁看、要回答的问题、固定章节、每章的计算与图表、判断标准和结论句式。**先读剧本和写作规则（`references/playbooks/writing_rules.md`）再写。**
+
+1. 生成数据包（平台已算好每章的数据、判断标签和必备图）：
 
 ```bash
-python scripts/run.py weekly-pack --data workdata
+python scripts/run.py report --scene weekly   --data workdata --pack report_pack.json      # 周度经营分析（可加 --week-end、--target 月度目标）
+python scripts/run.py campaigns --data workdata                                            # 先列出可复盘的活动
+python scripts/run.py report --scene campaign --campaign <活动编号> --data workdata --pack report_pack.json
+python scripts/run.py report --scene product  --product <编号> --data workdata --pack report_pack.json
 ```
 
-按 `templates/weekly_report.md` 的六个部分写作，数字只能来自数据包；没有数据的部分写「本周无」。
+2. 按剧本写 Markdown 报告：章节标题与顺序照数据包里的 `heading`；每章第一句加粗写结论；有必备图的章节在结论下单独一行写 `[图表:编号]`，图下写解读。
+
+3. 需要补充图时（最多 3 张），**只能用图表工具**，只传参数，不要自己写画图代码、不要传数字：
+
+```bash
+python scripts/run.py chart --pack report_pack.json --type dual_line --products S01 --metrics rating,refund_rate \
+    --mark-date 2026-09-12 --mark-text 差评集中 --title "差评出现后评分下滑、退款率翻倍" --data workdata
+```
+
+返回 `chart_id` 和数据摘要：把 `[图表:chart_id]` 写进正文，按摘要写解读；返回 `error` 时按说明改参数重试。图表类型与参数见 `references/chart_library.md`。
+
+4. 核对数字并导出带图表的 HTML 报告：
+
+```bash
+python scripts/run.py render report.md --pack report_pack.json --out report.html
+```
+
+`unmatched_numbers` 不为空时，把这些数字改为引用数据包或图表摘要里的数，再运行一次。把 HTML 交给用户（图表可以悬停查看）。
 
 ## 任务 D：商品分层
 
@@ -96,8 +120,8 @@ python scripts/run.py tier --data workdata
 把要交付的文字存成文件，运行：
 
 ```bash
-python scripts/run.py verify <文件> --product <编号> --data workdata     # 诊断
-python scripts/run.py verify <文件> --weekly --data workdata             # 周报
+python scripts/run.py verify <文件> --product <编号> --data workdata     # 诊断（对话式回答）
+python scripts/run.py render <报告.md> --pack report_pack.json          # 报告（同时导出 HTML）
 ```
 
 `unmatched_numbers` 不为空时，删除或改正这些数字后再交付。
@@ -124,6 +148,6 @@ python scripts/run.py verify <文件> --weekly --data workdata             # 周
 | `references/action_library.md` | 动作库与经营约束 |
 | `references/category_profiles.md` | 品类配置（通用默认 + 示例品类）与新增品类方法 |
 | `references/data_spec.md` | 标准数据模型、最小字段、字段同义词、缺数据时的降级 |
-| `templates/weekly_report.md` | 周报模板 |
-| `templates/product_report.md` | 单品诊断报告模板 |
+| `references/playbooks/*.md` | 三个报告场景的分析剧本与写作规则 |
+| `references/chart_library.md` | 图表库：图表类型、指标与参数 |
 | `examples/` | 标准格式示例（3C）与后台导出宽表示例（零食） |

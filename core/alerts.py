@@ -141,6 +141,28 @@ def gmv_impact(ds: Dataset, pid: str, day: pd.Timestamp) -> float:
     return round(max(a0["gmv"] - a1["gmv"], 0.0), 2)
 
 
+EXPECTED_RULES = {"R01", "R02"}      # 只有「量」的下滑（GMV、访客）才可能是预期内
+
+
+def expected_reason(ds: Dataset, pid: str, c: dict) -> dict | None:
+    """活动结束或大促后的回落属于预期内：只触发了 GMV / 访客类规则，且之前 10 天内有该商品的活动结束（或全店大促）。"""
+    if not c["rules"] or not c["rules"] <= EXPECTED_RULES:
+        return None
+    ev = ds.events
+    if ev.empty:
+        return None
+    lo, hi = c["first_date"] - 10 * DAY, c["last_trigger"]
+    x = ev[(ev["date"] >= lo) & (ev["date"] <= hi)]
+    pidcol = x["product_id"].fillna("")
+    hit = x[((x["event_type"] == "campaign_end") & (pidcol == pid)) | ((x["event_type"] == "promo_day") & (pidcol.isin(["", pid])))]
+    if hit.empty:
+        return None
+    e = hit.sort_values("date").iloc[-1]
+    d = e["date"]
+    return dict(reason=f"{d.month}/{d.day} {e['description']}，属于活动后的正常回落，不作为问题处理", event_date=d.strftime("%Y-%m-%d"),
+                event_type=e["event_type"])
+
+
 def scan(ds: Dataset, days: int = 14, as_of=None, tiers: dict | None = None, pids: list | None = None) -> list[dict]:
     """逐日扫描近 N 天，按合并规则生成问题卡。"""
     as_of = as_of or ds.as_of
@@ -182,6 +204,9 @@ def scan(ds: Dataset, days: int = 14, as_of=None, tiers: dict | None = None, pid
     for c in cards:
         pid = c["product_id"]
         p = ds.product(pid)
+        exp = expected_reason(ds, pid, c)
+        if exp and c["status"] == "active":
+            c["severity"] = "blue"
         res.append(dict(
             id=c["id"], product_id=pid, product_name=p["product_name"],
             tier=t_now[pid]["tier_name"], lifecycle=t_now[pid]["lifecycle_name"],
@@ -194,6 +219,7 @@ def scan(ds: Dataset, days: int = 14, as_of=None, tiers: dict | None = None, pid
             latest=c["latest"], history=c["history"],
             is_today=c["last_trigger"] == as_of,
             gmv_impact=gmv_impact(ds, pid, c["last_trigger"]),
+            expected=exp,
         ))
     res.sort(key=lambda x: (-int(x["is_today"]), -SEV_ORDER[x["severity"]], -x["gmv_impact"]))
     return res

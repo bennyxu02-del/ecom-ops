@@ -51,8 +51,10 @@ export default function Alerts() {
                   <Button size="small" type="primary">{c.is_today ? "AI 诊断" : "查看"}</Button>
                 </div>
               </>}>
-              <div className="t"><Sev s={c.severity} /> {c.product_name} <Tag bordered={false}>{c.tier} · {c.lifecycle}</Tag></div>
+              <div className="t"><Sev s={c.severity} /> {c.product_name} <Tag bordered={false}>{c.tier} · {c.lifecycle}</Tag>
+                {c.expected && <Tag bordered={false} color="default">预期内</Tag>}</div>
               <div className="d">{c.latest.map((x: any) => x.text).join("；")}</div>
+              {c.expected && <div className="d expected-tag">{c.expected.reason}</div>}
               {c.ai_summary && <div className="ai"><b style={{ color: "#2a78d6" }}>AI：</b>{c.ai_summary}</div>}
               <div className="d muted small">首次触发 {c.first_date} · 最近触发 {c.last_trigger} · 共 {c.trigger_days} 天
                 {c.gmv_impact > 0 ? ` · 影响 GMV 约 ${money(c.gmv_impact)}（估算）` : ""}{c.ignore_reason ? " · 忽略原因：" + c.ignore_reason : ""}</div>

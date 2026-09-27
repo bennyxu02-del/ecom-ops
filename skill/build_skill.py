@@ -123,6 +123,21 @@ def profiles_md():
         "\n\n## 新增一个品类\n\n复制 `scripts/config/category_profiles/3c.yaml`，按新品类修改上表参数与 `match` 关键词。可以先让 AI 起草（例如母婴需注意效期与合规），**由懂行的人审核后生效**。\n"
 
 
+def chart_md():
+    sys.path.insert(0, str(ROOT))
+    from core import charts
+    rows = [[x["name"], x["type"], x["use"], x["params"]] for x in charts.library_doc()]
+    ms = [[k, v[0], "可以" if v[2] else "只能单个商品"] for k, v in charts.METRICS.items()]
+    return ("# 图表库\n\n报告里的图只能用 `scripts/run.py chart` 画：只传参数，数据由脚本从数据里取，参数不合格会返回错误说明。"
+            "不要自己写画图代码。\n\n" + table(["图表", "类型", "用来说明什么", "参数"], rows)
+            + "\n\n## 可用指标\n\n" + table(["指标", "名称", "按全部商品（ALL）汇总"], ms)
+            + "\n\n## 参数\n\n- `--products`：商品编号，逗号分隔；全部商品写 `ALL`\n- `--metrics`：指标，逗号分隔\n"
+              "- `--by`：瀑布图 factor / product，分组柱 channel / variant / product，堆叠柱 tier / variant\n"
+              "- `--start` `--end`：本期（默认截止日前 28 天，瀑布图 / 条形 / 分组柱 / 指标卡默认 7 天）；`--compare-start` `--compare-end`：对比期（默认本期之前等长）\n"
+              "- `--mark-date` `--mark-text`：竖线标注；`--band-start` `--band-end` `--band-text`：底色区间\n"
+              "- `--title`：写结论，不写主题\n")
+
+
 def build():
     if DIST.exists():
         shutil.rmtree(DIST)
@@ -134,11 +149,14 @@ def build():
         (DIST / "references" / k).write_text(v, encoding="utf-8")
     shutil.copy(M / "attribution_sop.md", DIST / "references" / "attribution_sop.md")
     shutil.copy(ROOT / "skill" / "data_spec.md", DIST / "references" / "data_spec.md")
-    shutil.copytree(M / "templates", DIST / "templates")
+    shutil.copytree(M / "playbooks", DIST / "references" / "playbooks")
+    (DIST / "references" / "chart_library.md").write_text(chart_md(), encoding="utf-8")
     (DIST / "scripts").mkdir()
     shutil.copy(ROOT / "skill" / "run.py", DIST / "scripts" / "run.py")
     shutil.copytree(ROOT / "core", DIST / "scripts" / "core", ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copytree(M, DIST / "scripts" / "config", ignore=shutil.ignore_patterns("templates"))
+    shutil.copytree(M, DIST / "scripts" / "config")
+    (DIST / "scripts" / "core" / "assets").mkdir(exist_ok=True)
+    shutil.copy(ROOT / "web" / "src" / "lib" / "reportCharts.js", DIST / "scripts" / "core" / "assets" / "report_charts.js")
     # 示例数据：3C 标准格式近 60 天；零食后台导出宽表
     src = ROOT / "data" / "datasets" / "3c"
     ex = DIST / "examples" / "3c_sample"

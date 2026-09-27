@@ -29,11 +29,11 @@ sys.path.insert(0, str(ROOT))
 
 from core import actions as core_actions  # noqa: E402
 from core import sop, weekly  # noqa: E402
+from core.reports import SCENES  # noqa: E402
 
 from . import collab, data, feishu, llm_client, notify, state, todos  # noqa: E402
 from .agent import chat as chat_agent  # noqa: E402
 from .agent import diagnose, report  # noqa: E402
-from .product_report import render_product_report  # noqa: E402
 
 WEB_DIST = ROOT / "web" / "dist"
 SKILL_DIST = ROOT / "dist" / "product-ops-analysis"
@@ -147,7 +147,7 @@ class TodoCreate(BaseModel):
     track_metric: Optional[str] = None
     track_days: Optional[int] = None
     note: Optional[str] = None
-    source: Literal["diagnosis", "chat", "manual"] = "manual"
+    source: Literal["diagnosis", "chat", "manual", "report"] = "manual"
     context: Optional[dict] = None
     plan: Optional[dict] = Field(None, description="采纳 AI 方案时传入诊断结果中的方案对象")
     card_id: Optional[str] = None
@@ -576,28 +576,62 @@ def api_todo_draft(pid: str, body: TodoDraft, ds: str = DS):
 
 
 # ---------------- 报告 ----------------
-@app.post("/api/reports/weekly", tags=["报告中心"], summary="生成周报（SSE 流式）")
+class ReportGen(BaseModel):
+    scene: Literal["weekly", "campaign", "product"]
+    params: dict = {}
+
+
+class TargetPut(BaseModel):
+    month: str
+    target: float | None = None
+
+
+def _report_out(r):
+    r = dict(r)
+    for k in ("params_json", "charts_json", "extra_json"):
+        v = r.pop(k, None)
+        try:
+            r[k[:-5]] = json.loads(v) if v else ({} if k != "charts_json" else {})
+        except json.JSONDecodeError:
+            r[k[:-5]] = {}
+    r["scene_name"] = SCENES.get(r["type"], r["type"])
+    return r
+
+
+@app.get("/api/reports/scenes", tags=["报告中心"], summary="三个报告场景与可选参数")
+def api_report_scenes(ds: str = DS):
+    return report.scenes(ds_name(ds))
+
+
+@app.post("/api/reports/generate", tags=["报告中心"], summary="按场景生成报告（SSE 流式）")
+def api_report_generate(body: ReportGen, ds: str = DS):
+    return sse(report.run(ds_name(ds), body.scene, body.params))
+
+
+@app.put("/api/reports/target", tags=["报告中心"], summary="设置月度 GMV 目标（周报显示完成进度）")
+def api_report_target(body: TargetPut, ds: str = DS):
+    name = ds_name(ds)
+    state.set_setting(report.target_key(name, body.month), body.target or "")
+    return dict(ok=True, month=body.month, target=body.target)
+
+
+@app.post("/api/reports/weekly", tags=["报告中心"], summary="生成周度经营分析（SSE 流式，兼容旧入口）")
 def api_weekly(ds: str = DS):
-    return sse(report.run(ds_name(ds)))
+    return sse(report.run(ds_name(ds), "weekly", {}))
 
 
 @app.post("/api/reports/product/{pid}", tags=["报告中心"], summary="生成单品诊断报告")
 def api_product_report(pid: str, ds: str = DS):
     name = ds_name(ds)
-    d = data.ds_of(name)
-    c = state.cache_get(diagnose.cache_key(name, pid))
-    card = data.card_for(name, pid, today_only=True)
-    res = c["result"] if c else sop.run(d, pid, card=card, tiers=data.tiers(name))[1]
-    detail = data.product_detail(name, pid)
-    md = render_product_report(detail, res, card)
-    rid = state.add_report(ds=name, type="product", title=f"{detail['product_name']} 诊断报告（{detail['as_of']}）",
-                           period=detail["as_of"], content=md, status="draft", source=res.get("source", "rules"))
-    return dict(ok=True, id=rid)
+    if pid not in data.ds_of(name).product_ids():
+        raise HTTPException(404, f"未知商品 {pid}")
+    res = report.generate(name, "product", dict(product_id=pid))
+    return dict(ok=True, id=res["id"])
 
 
 @app.get("/api/reports", tags=["报告中心"])
 def api_reports(ds: str = DS):
-    return state.list_reports(ds_name(ds))
+    return [dict(r, scene_name=SCENES.get(r["type"], r["type"])) for r in state.list_reports(ds_name(ds))]
 
 
 @app.get("/api/reports/{rid}", tags=["报告中心"])
@@ -605,7 +639,7 @@ def api_report(rid: int):
     r = state.get_report(rid)
     if not r:
         raise HTTPException(404, "报告不存在")
-    return r
+    return _report_out(r)
 
 
 @app.put("/api/reports/{rid}", tags=["报告中心"])
@@ -631,7 +665,8 @@ def api_report_copy(rid: int):
     if not r:
         raise HTTPException(404, "报告不存在")
     nid = state.add_report(ds=r["ds"], type=r["type"], title=r["title"] + "（副本）", period=r["period"],
-                           content=r["content"], status="draft", source=r["source"])
+                           content=r["content"], status="draft", source=r["source"], params_json=r.get("params_json"),
+                           charts_json=r.get("charts_json"), extra_json=r.get("extra_json"))
     return dict(ok=True, id=nid)
 
 

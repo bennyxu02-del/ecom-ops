@@ -24,7 +24,7 @@ ROLES = ["我", "供应链", "投放运营"]
 TRACK_METRICS = ["gmv", "cvr", "uv", "aov", "units", "rating", "uv_paid", "uv_search"]
 STAGE_NAMES = {"doing": "执行中", "tracking": "跟踪中", "review": "待复盘", "done": "已完成", "cancelled": "已取消"}
 OUTCOMES = {"effective": "有效", "ineffective": "无效", "unknown": "无法判断"}
-SOURCE_NAMES = {"diagnosis": "AI 诊断", "chat": "对话", "manual": "手动新建"}
+SOURCE_NAMES = {"diagnosis": "AI 诊断", "chat": "对话", "manual": "手动新建", "report": "报告"}
 CAUSE_NAMES = {"chat": "对话发现", "manual": "临时事项"}
 DEFAULT_DUE_DAYS = 3
 DEFAULT_TRACK_DAYS = 7
@@ -148,7 +148,7 @@ def create(name: str, pid: str, *, title: str, steps: list, due_date: str | None
                            adopted_date=today(name), context_json=json.dumps(ctx, ensure_ascii=False),
                            due_date=due, note=(note or "").strip() or None, source=source)
     collab.create_for_action(name, aid, pid, p, ctx, due, base_url)
-    collab.add_log(aid, {"diagnosis": "采纳 AI 诊断方案", "chat": "从 AI 对话创建", "manual": "手动新建"}.get(source, "创建待办"))
+    collab.add_log(aid, {"diagnosis": "采纳 AI 诊断方案", "chat": "从 AI 对话创建", "manual": "手动新建", "report": "从报告创建"}.get(source, "创建待办"))
     if card_id:
         st = (state.card_states(name).get(card_id) or {}).get("status")
         if st not in ("done", "ignored"):

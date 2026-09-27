@@ -76,12 +76,13 @@ def _req(path: str, payload: dict | None = None, method: str = "POST", stream: b
         raise LLMError(f"模型接口连接失败：{e}") from e
 
 
-def chat(messages: list[dict], tools: list[dict] | None = None, temperature: float = 0.2, max_tokens: int = 3000) -> dict:
+def chat(messages: list[dict], tools: list[dict] | None = None, temperature: float = 0.2, max_tokens: int = 3000,
+         timeout_s: float | None = None) -> dict:
     payload = dict(model=env("LLM_MODEL"), messages=messages, temperature=temperature, max_tokens=max_tokens)
     if tools:
         payload["tools"] = [{"type": "function", "function": t} for t in tools]
         payload["tool_choice"] = "auto"
-    with _req("/chat/completions", payload) as resp:
+    with _req("/chat/completions", payload, t=timeout_s) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     try:
         msg = data["choices"][0]["message"]

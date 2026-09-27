@@ -73,7 +73,7 @@ export default function Overview() {
         {o.todo.length ? o.todo.map((c: any) => (
           <AlertRow key={c.id} c={c} onClick={() => nav(`/product/${c.product_id}?diag=1`)}
             extra={<><Tag bordered={false}>{c.status_name}</Tag><Button size="small" type="primary">AI 诊断</Button></>}>
-            <div className="t"><Sev s={c.severity} /> {c.product_name} <Tag bordered={false}>{c.rule_names.join(" · ")}</Tag></div>
+            <div className="t"><Sev s={c.severity} /> {c.product_name} <Tag bordered={false}>{c.rule_names.join(" · ")}</Tag>{c.expected && <Tag bordered={false}>预期内</Tag>}</div>
             <div className="d">首次触发 {c.first_date} · 持续 {c.trigger_days} 天{c.gmv_impact > 0 ? ` · 影响 GMV 约 ${money(c.gmv_impact)}（估算）` : ""}</div>
           </AlertRow>
         )) : <Empty style={{ padding: 32 }} description="今天没有待处理的预警" />}

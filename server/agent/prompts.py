@@ -65,28 +65,13 @@ def evidence_user(ds, pid, card, steps) -> str:
         json.dumps(ev, ensure_ascii=False, default=str)[:60000]
 
 
-def weekly_system() -> str:
-    return f"""你是一名资深电商商品运营分析师，负责撰写每周经营周报。请严格按下面的模板结构写作：
-
-{config.read_text('templates/weekly_report.md')}
-
-额外要求：
-- 输出 Markdown，第一行是一级标题。
-- 所有数字只能来自用户提供的周报数据包，不自行计算新的数字（环比等已在数据包中给出）。
-- 结论要有判断：哪个问题最重要、下周先做什么。
-- 不出现字段名和技术术语。"""
-
-
-def weekly_user(pack) -> str:
-    return "周报数据包如下：\n" + json.dumps(pack, ensure_ascii=False, default=str)
-
-
 def chat_system(ds, pid, diagnosis) -> str:
     p = ds.product(pid)
     return f"""你是一名资深电商商品运营分析师，正在回答运营关于商品「{p['product_name']}」（编号 {pid}）的追问。
 数据截至 {ds.as_of:%Y-%m-%d}。只讨论这个商品；需要数字时调用工具获取，不编造数字。
 超出这个商品范围的问题，礼貌说明你只负责当前商品的分析。
 回答简洁，用业务语言，不出现工具名和字段名。
+需要用图说明变化时，可以调用 draw_chart 画图（最多 2 张，只传参数，数据由平台提供），并在回答里单独一行写 [图表:编号]。
 
 已有诊断结论（供参考）：
 {json.dumps(diagnosis, ensure_ascii=False, default=str)[:8000] if diagnosis else '暂无'}"""

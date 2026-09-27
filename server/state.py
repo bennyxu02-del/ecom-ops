@@ -35,7 +35,8 @@ MIGRATIONS = [("actions", "step_done", "TEXT"), ("actions", "context_json", "TEX
               ("actions", "note", "TEXT"), ("actions", "source", "TEXT"), ("actions", "log_json", "TEXT"),
               ("handoffs", "reminded_at", "REAL"), ("handoffs", "remind_count", "INTEGER"), ("handoffs", "auto_reminds", "INTEGER"),
               ("actions", "outcome", "TEXT"), ("actions", "review_note", "TEXT"), ("actions", "closed_date", "TEXT"),
-              ("actions", "track_days", "INTEGER"), ("actions", "early_end", "INTEGER"), ("actions", "cancel_reason", "TEXT")]
+              ("actions", "track_days", "INTEGER"), ("actions", "early_end", "INTEGER"), ("actions", "cancel_reason", "TEXT"),
+              ("reports", "params_json", "TEXT"), ("reports", "charts_json", "TEXT"), ("reports", "extra_json", "TEXT")]
 
 # v9 起：待办只有 doing / tracking / review / done / cancelled；协同只有 pending / notified / question / done / cancelled
 _OLD_ACTION = {"adopted": "doing", "transferred": "doing", "declined": "doing", "executed": "tracking"}

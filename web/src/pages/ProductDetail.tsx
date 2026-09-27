@@ -74,7 +74,7 @@ export default function ProductDetail() {
               <Tag bordered={false}>{d.category} · {d.sub_category || ""}</Tag>
               <Tag bordered={false}>上市 {d.launch_date}</Tag>
               {d.margin != null && <Tag bordered={false}>毛利率 {(d.margin * 100).toFixed(0)}%</Tag>}
-              {card && <><Sev s={card.severity} /><Tag bordered={false}>{card.rule_names.join(" · ")}</Tag></>}
+              {card && <><Sev s={card.severity} /><Tag bordered={false}>{card.rule_names.join(" · ")}</Tag>{card.expected && <Tag bordered={false}>预期内</Tag>}</>}
             </div>
           </div>
           <Button className="to-ai" type="primary" ghost icon={<ArrowDownOutlined />}

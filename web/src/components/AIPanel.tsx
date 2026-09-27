@@ -5,13 +5,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, sse } from "../api";
 import { useApp } from "../App";
 import AnalysisPath from "./AnalysisPath";
-import Markdown from "./Markdown";
+import ReportBody from "./ReportBody";
 import PlanCard from "./PlanCard";
 import ReasonModal, { ReasonSpec } from "./ReasonModal";
 import TodoModal, { TodoDraft } from "./TodoModal";
 
 type Step = { text: string; done: boolean };
-type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[]; preset?: boolean; done?: boolean; noai?: boolean; todo?: TodoDraft | null; created?: any; drafting?: boolean; q?: string; dismissed?: boolean };
+type Msg = { role: "user" | "assistant"; text: string; pending?: string | null; unmatched?: string[]; preset?: boolean; done?: boolean; noai?: boolean; todo?: TodoDraft | null; created?: any; drafting?: boolean; q?: string; dismissed?: boolean; charts?: Record<string, any> };
 
 function StepList({ steps, running }: { steps: Step[]; running: boolean }) {
   return (
@@ -111,7 +111,7 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
       await sse(`/api/chat/${pid}`, { messages: history.current, preset, plan }, ev => {
         if (ev.type === "step") upd(m => ({ ...m, pending: ev.summary }));
         if (ev.type === "delta") { out += ev.text; upd(m => ({ ...m, text: out, pending: null })); }
-        if (ev.type === "result") upd(m => ({ ...m, pending: null, unmatched: ev.unmatched_numbers || [], done: true, noai: ev.source === "none", todo: ev.todo || null }));
+        if (ev.type === "result") upd(m => ({ ...m, pending: null, unmatched: ev.unmatched_numbers || [], done: true, noai: ev.source === "none", todo: ev.todo || null, charts: ev.charts || {} }));
         if (ev.type === "error") upd(m => ({ ...m, pending: null, text: "出错了：" + ev.message }));
       });
     } catch (e: any) { upd(m => ({ ...m, pending: null, text: "出错了：" + e.message })); }
@@ -204,7 +204,7 @@ export default function AIPanel({ detail, card, autoRun }: { detail: any; card: 
                       {m.role === "user" ? m.text : (
                         <>
                           {m.pending && <span className="muted"><Spin size="small" /> {m.pending}</span>}
-                          {m.text && <Markdown text={m.text} marks={m.unmatched} />}
+                          {m.text && <ReportBody text={m.text} charts={m.charts || {}} marks={m.unmatched} compact />}
                           {m.unmatched && m.unmatched.length > 0 && <div className="small" style={{ color: "#7a5000", marginTop: 4 }}>⚠ 未核对到的数字：{m.unmatched.join("、")}</div>}
                       {m.done && !m.noai && !m.preset && m.text && (m.created ? (
                         <div className="m-ops"><CheckCircleFilled style={{ color: "#0ca30c" }} />已加入待办「{m.created.name}」<Link to={`/actions?open=${m.created.id}`}>查看</Link></div>

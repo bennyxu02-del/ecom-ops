@@ -8,7 +8,7 @@ import { Delta, num } from "../format";
 import { HandoffTag } from "./HandoffSendModal";
 import { HandoffOps, StageTag, ago } from "./TodoViews";
 
-const SOURCE_COLOR: Record<string, string> = { diagnosis: "blue", chat: "purple", manual: "default" };
+const SOURCE_COLOR: Record<string, string> = { diagnosis: "blue", chat: "purple", manual: "default", report: "cyan" };
 export const SourceTag = ({ a }: { a: any }) => <Tag bordered={false} color={SOURCE_COLOR[a.source] || "default"}>{a.source_name}</Tag>;
 const STAGES = ["doing", "tracking", "review", "done"];
 const OUTCOMES: [string, string][] = [["effective", "有效"], ["ineffective", "无效"], ["unknown", "无法判断"]];

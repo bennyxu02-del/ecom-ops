@@ -27,7 +27,7 @@ EXPECT = {
     },
     "snacks": {
         "S01": dict(tier="爆品", sev="red", rules={"R07", "R03"}, cause="reputation_drop", plans={"review_handling"}),
-        "S02": dict(tier="爆品", sev="red", rules={"R01"}, cause="campaign_end", plans={"mark_known"}),
+        "S02": dict(tier="爆品", sev="blue", rules={"R01"}, cause="campaign_end", plans={"mark_known"}, expected=True),
         "S04": dict(tier="利润品", sev="yellow", rules={"R05"}, cause="stockout_risk", plans={"replenish"}),
     },
 }
@@ -70,6 +70,7 @@ def main() -> int:
             if not c:
                 continue
             ok(c["severity"] == e["sev"], f"[{name}] {pid} 严重度应为 {e['sev']}，实际 {c['severity']}")
+            ok(bool(c.get("expected")) == bool(e.get("expected")), f"[{name}] {pid} 预期内标记应为 {bool(e.get('expected'))}")
             ok(e["rules"] <= set(c["rules"]), f"[{name}] {pid} 规则应包含 {e['rules']}，实际 {c['rules']}")
             _, res = sop.run(ds, pid, card=c, tiers=tiers)
             causes = [x["cause"] for x in res["root_causes"]]

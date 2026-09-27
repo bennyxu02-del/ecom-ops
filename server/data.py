@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from core import alerts, config, health, loader, tiering
+from core import charts, alerts, config, health, loader, tiering
 from core.decompose import breakdown_channels, breakdown_variants, decompose_gmv
 from core.metrics import DAY, agg, r, slice_, windows
 
@@ -208,7 +208,11 @@ def methods(name):
     return dict(profile=ds.profile, metrics=config.metrics(), tree=config.tree(), tiering=config.tiering_cfg(),
                 alert_rules=config.alert_rules(), action_library=config.action_library(),
                 sop=config.read_text("attribution_sop.md"),
-                weekly_template=config.read_text("templates/weekly_report.md"))
+                playbooks=dict(weekly=config.read_text("playbooks/weekly_review.md"),
+                               campaign=config.read_text("playbooks/campaign_review.md"),
+                               product=config.read_text("playbooks/product_diagnosis.md"),
+                               writing=config.read_text("playbooks/writing_rules.md")),
+                chart_library=charts.library_doc(), chart_tool=charts.TOOL_SPEC, calendar=config.calendar())
 
 
 def seed():

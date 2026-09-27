@@ -30,3 +30,19 @@ constraints:
 
 # 复盘：跟踪指标朝目标方向变化达到该幅度，建议判定为「有效」
 review_threshold: 0.03
+
+# 报告：三个报告场景的判断标准（分析剧本见 methods/playbooks/）。演示为建议默认值，可按公司口径调整。
+report:
+  flat_band: 0.05               # 周度：大盘环比在 ±5% 内且没有预警 = 平稳
+  cover_share: 0.80             # 周度：「变化从哪来」要逐个解释的商品，覆盖总波动的比例
+  max_items: 6                  # 周度：逐个解释的商品最多几个
+  main_factor_share: 0.30       # 拆解：贡献占比 ≥ 30% 的因子为主因
+  trend_weeks: 8                # 周度：大盘趋势看近几周
+  structure_weeks: 4            # 周度：商品结构看近几周
+  campaign_pre_days: 21         # 活动：活动前基线取多少天（避开其他大促日）
+  campaign_post_days: 7         # 活动：活动后观察多少天
+  campaign_main_share: 0.50     # 活动：会场带来的成交占增量 ≥ 50% = 活动是增长主力
+  campaign_other_band: 0.05     # 活动：其他商品日均变化在 ±5% 内 = 没有挤占也没有带动
+  festival_cover_days: 3        # 活动：节日相关的会场应覆盖到节前几天
+  worsening_days: 3             # 单品：近 N 天比本周前几天更差 = 在恶化
+  extra_chart_limit: 3          # 每份报告 AI 最多补充几张图
