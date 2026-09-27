@@ -100,7 +100,7 @@ def build(ds, pid: str, result: dict, card: dict | None = None, tiers: dict | No
                                      tag=f"断货 {v['stockout_days']} 天" if bad else None, tone="bad" if bad else None))
                 if oos:
                     v = max(oos, key=lambda x: x["baseline_share"])
-                    title = f"{v['name']}断货 {v['stockout_days']} 天（{v['stockout_dates'][0]}~{v['stockout_dates'][-1]}），平时占销量 {v['baseline_share']:.0%}"
+                    title = f"{v['name']}断货 {v['stockout_days']} 天（{v['stockout_dates'][0]}–{v['stockout_dates'][-1]}），平时占销量 {v['baseline_share']:.0%}"
                 else:
                     title = "各规格都有货，占比稳定"
                 layers.append(dict(key="variant", label="第二层 · 转化率按规格看", title=title, rows=rows))

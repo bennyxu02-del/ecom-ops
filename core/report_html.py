@@ -53,7 +53,7 @@ mark{{background:#fff1b8}} .vb{{padding:8px 12px;border-radius:8px;font-size:13p
 const CHARTS = {_safe(json.dumps(charts, ensure_ascii=False))};
 const UNMATCHED = {_safe(json.dumps(unmatched, ensure_ascii=False))};
 (function () {{
-  const raw = document.getElementById("md").textContent;
+  const raw = document.getElementById("md").textContent.replace(/(^|[^~\\\\])~(?!~)/g, "$1\\\\~");
   const ph = /\\[图表[:：]\\s*(c\\d+)\\s*\\]/g;
   let out = "", last = 0, m;
   const mark = (h) => UNMATCHED.reduce((s, n) => s.split(n).join("<mark>" + n + "</mark>"), h);

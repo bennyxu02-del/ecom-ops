@@ -219,7 +219,7 @@ def _mm(d) -> str:
 
 
 def wlabel(w) -> str:
-    return f"{_mm(w[0])}~{_mm(w[1])}" if w[0] != w[1] else _mm(w[0])
+    return f"{_mm(w[0])}–{_mm(w[1])}" if w[0] != w[1] else _mm(w[0])
 
 
 def _metrics(a: dict, n_min=1, n_max=1, allow=None) -> list[str]:

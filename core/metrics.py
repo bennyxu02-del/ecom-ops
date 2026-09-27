@@ -15,7 +15,7 @@ def windows(as_of: pd.Timestamp, days: int = 7):
 
 
 def fmt_window(w) -> str:
-    return f"{w[0]:%m-%d}~{w[1]:%m-%d}"
+    return f"{w[0]:%m-%d}–{w[1]:%m-%d}"
 
 
 def slice_(df: pd.DataFrame, w) -> pd.DataFrame:

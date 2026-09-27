@@ -25,10 +25,11 @@ function remarkMarks(marks: string[]) {
   };
 }
 
+/** 注意：单个「~」常用来写日期区间（09-14~09-20），不能当删除线；只有「~~文字~~」才是删除线 */
 export default function Markdown({ text, marks = [] }: { text: string; marks?: string[] }) {
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMarks(marks)]}>{text || ""}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkMarks(marks)]}>{text || ""}</ReactMarkdown>
     </div>
   );
 }
