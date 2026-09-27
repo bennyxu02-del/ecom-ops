@@ -116,13 +116,16 @@ LOG = None      # 每个命令的输出都记一份，verify / render 核对数�
 
 def out(obj):
     text = json.dumps(obj, ensure_ascii=False, indent=1, default=_default)
-    print(text)
-    if LOG is not None:
+    if LOG is not None:      # 先记录再输出：输出被 head 等截断时，计算结果也已经记下，后面核对数字不受影响
         try:
             with open(LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps(obj, ensure_ascii=False, default=_default) + "\n")
         except Exception:  # noqa: BLE001
             pass
+    try:
+        print(text)
+    except BrokenPipeError:
+        pass
 
 
 def logged_numbers(data) -> set:
