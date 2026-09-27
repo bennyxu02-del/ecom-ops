@@ -36,7 +36,7 @@ from core.reports import SCENES  # noqa: E402
 from core import alerts as core_alerts  # noqa: E402
 from core import custom_alerts  # noqa: E402
 
-from . import alert_detail, alert_flow, alert_push, collab, data, feishu, llm_client, notify, state, todos  # noqa: E402
+from . import alert_detail, alert_flow, alert_push, collab, overview, data, feishu, llm_client, notify, state, todos  # noqa: E402
 from .agent import alert_chat  # noqa: E402
 from .agent import chat as chat_agent  # noqa: E402
 from .agent import diagnose, report  # noqa: E402
@@ -265,9 +265,9 @@ def api_methods(ds: str = DS):
 
 
 # ---------------- 总览与商品 ----------------
-@app.get("/api/overview", tags=["经营总览"])
-def api_overview(ds: str = DS, window: int = 7):
-    return data.overview(ds_name(ds), window)
+@app.get("/api/overview", tags=["经营总览"], summary="经营总览：生意怎么样 → 为什么变 → 今天做什么")
+def api_overview(ds: str = DS, scope: Literal["focus", "all"] = "focus"):
+    return overview.build(ds_name(ds), scope)
 
 
 @app.get("/api/products", tags=["商品"])

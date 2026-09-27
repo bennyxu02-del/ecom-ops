@@ -186,56 +186,6 @@ def products(name, focus_only=False):
     return rows
 
 
-def overview(name, window=7):
-    ds = ds_of(name)
-    t = tiers(name)
-    focus = [pid for pid, v in t.items() if v["focus"]]
-    allf = pd.concat([ds.pdays(pid) for pid in focus]).sort_index()
-    cur_w, prev_w = windows(ds.as_of, window)
-    a1, a0 = agg(slice_(allf, cur_w)), agg(slice_(allf, prev_w))
-    daily = allf.groupby(level=0)[["gmv", "uv", "buyers"]].sum()
-    trend = [dict(date=d.strftime("%Y-%m-%d"), gmv=round(float(v["gmv"])), uv=int(v["uv"])) for d, v in daily.tail(90).iterrows()]
-    by_tier = {}
-    for pid in focus:
-        by_tier.setdefault(t[pid]["tier_name"], []).append(pid)
-    tier_trend = {}
-    for tn, pids in by_tier.items():
-        f = pd.concat([ds.pdays(p) for p in pids]).groupby(level=0)["gmv"].sum()
-        tier_trend[tn] = [round(float(v)) for v in f.tail(90).tolist()]
-    cs = cards(name)
-    today = [c for c in cs if c["is_today"]]
-    sev = {"red": 0, "yellow": 0, "blue": 0}
-    for c in today:
-        sev[c["severity"]] += 1
-    hl = {"健康": 0, "关注": 0, "风险": 0}
-    for pid in focus:
-        lv = health_of(name, pid)["level"]
-        if lv:
-            hl[lv] += 1
-    todo = [c for c in cs if c["group"] == "pending"]
-    events = []
-    ev = ds.events
-    if not ev.empty:
-        for _, e in ev[ev["date"] <= ds.as_of].iterrows():
-            events.append(dict(date=e["date"].strftime("%Y-%m-%d"), product_id=e["product_id"], type=e["event_type"],
-                               description=e["description"]))
-    return dict(dataset=name, dataset_name=DATASETS.get(name), as_of=ds.as_of.strftime("%Y-%m-%d"), window=window,
-                cur_window=f"{cur_w[0]:%m-%d}~{cur_w[1]:%m-%d}", prev_window=f"{prev_w[0]:%m-%d}~{prev_w[1]:%m-%d}",
-                focus_count=len(focus), product_count=len(ds.product_ids()),
-                kpi=dict(gmv=dict(cur=round(a1["gmv"]), change=_chg(a1["gmv"], a0["gmv"])),
-                         uv=dict(cur=a1["uv"], change=_chg(a1["uv"], a0["uv"])),
-                         cvr=dict(cur=r(a1["cvr"]), change=_chg(a1["cvr"], a0["cvr"])),
-                         aov=dict(cur=round(a1["aov"], 2), change=_chg(a1["aov"], a0["aov"]))),
-                alerts=dict(today=sev, pending=len(todo), doing=sum(1 for c in cs if c["group"] == "doing"),
-                            opportunity=sum(1 for c in cs if c["group"] == "opportunity")), health=hl, trend=trend, tier_trend=tier_trend,
-                dates=[x["date"] for x in trend],
-                todo=[dict(id=c["id"], product_id=c["product_id"], product_name=c["product_name"], severity=c["severity"],
-                           rule_names=c["rule_names"], gmv_impact=c["gmv_impact"], status_name=c["status_name"],
-                           first_date=c["first_date"], trigger_days=c["trigger_days"], expected=c.get("expected"),
-                           reopen_name=c.get("reopen_name"), store=c.get("store")) for c in todo][:6],
-                events=events, profile_name=ds.profile.get("name"))
-
-
 def product_detail(name, pid):
     ds = ds_of(name)
     t = tiers(name)[pid]
